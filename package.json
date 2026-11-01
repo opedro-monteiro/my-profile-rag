@@ -1,0 +1,36 @@
+{
+  "name": "my-profile-rag",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/cli/chat.ts",
+  "scripts": {
+    "chat": "node --no-warnings --env-file .env src/cli/chat.ts",
+    "seed": "node --no-warnings --env-file .env src/cli/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "infra:up": "docker-compose up -d --wait",
+    "infra:down": "docker-compose down --volumes"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
+    "@langchain/community": "^1.1.29",
+    "@langchain/core": "^1.3.2",
+    "@langchain/langgraph": "^1.6.0",
+    "@langchain/neo4j": "^0.1.29",
+    "@langchain/ollama": "^1.3.0",
+    "@langchain/openai": "^1.8.0",
+    "@langchain/textsplitters": "^1.0.2",
+    "langchain": "^1.6.0",
+    "neo4j-driver": "^6.3.0",
+    "pdf-parse": "^2.4.5",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
