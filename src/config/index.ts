@@ -6,6 +6,11 @@ import { parseEnv, type Env } from "./env.ts";
 
 function buildConfig(env: Env) {
   return Object.freeze({
+    api: {
+      host: env.API_HOST,
+      port: env.API_PORT,
+      corsOrigin: env.CORS_ORIGIN,
+    },
     llm: {
       provider: env.LLM_PROVIDER,
       temperature: 0,

@@ -1,50 +1,30 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { AIMessageChunk } from "@langchain/core/messages";
 import { createAssistant, type Assistant } from "../agent/assistant.ts";
-import { InvalidEnvError } from "../config/env.ts";
-import {
-  closeVectorStore,
-  getVectorStore,
-  VectorIndexNotFoundError,
-} from "../infra/vector-store.ts";
+import { streamReply } from "../agent/stream-reply.ts";
+import { closeVectorStore, getVectorStore } from "../infra/vector-store.ts";
+import { describeFatalError } from "./fatal-error.ts";
 
 const PROMPT = "\nVocê > ";
 
-function describeFatalError(error: unknown): string {
-  if (error instanceof InvalidEnvError) return error.message;
-  if (error instanceof VectorIndexNotFoundError)
-    return `${error.message}. Rode "npm run seed" antes de conversar.`;
-
-  const detail = error instanceof Error ? error.message : String(error);
-  return `Não foi possível iniciar o chat: ${detail}\nVerifique se o Neo4j está no ar com "npm run infra:up".`;
-}
-
-async function streamReply(
+async function printReply(
   assistant: Assistant,
   message: string,
   threadId: string,
   signal: AbortSignal,
 ): Promise<void> {
-  const stream = await assistant.stream(
-    { messages: [{ role: "user", content: message }] },
-    { configurable: { thread_id: threadId }, streamMode: "messages", signal },
-  );
-
   let isWritingReply = false;
 
-  for await (const [chunk] of stream) {
-    if (!AIMessageChunk.isInstance(chunk)) continue;
-
-    for (const toolCall of chunk.tool_call_chunks ?? [])
-      if (toolCall.name) output.write(`\n🔎 Usando ${toolCall.name}...\n`);
-
-    if (!chunk.text) continue;
+  for await (const event of streamReply(assistant, message, threadId, signal)) {
+    if (event.type === "tool") {
+      output.write(`\n🔎 Usando ${event.name}...\n`);
+      continue;
+    }
 
     if (!isWritingReply) output.write("\nAssistente > ");
     isWritingReply = true;
-    output.write(chunk.text);
+    output.write(event.text);
   }
 
   output.write("\n");
@@ -75,7 +55,7 @@ async function runChat(assistant: Assistant): Promise<void> {
       output.write("Conversa reiniciada.\n");
     } else if (message) {
       try {
-        await streamReply(assistant, message, threadId, shutdown.signal);
+        await printReply(assistant, message, threadId, shutdown.signal);
       } catch (error) {
         if (shutdown.signal.aborted) break;
 

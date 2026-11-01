@@ -1,0 +1,52 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Overview
+
+Chat assistant that answers questions about Pedro Monteiro from `data/Profile.pdf`, available in the terminal and through a Fastify streaming API. It is a LangChain agent with RAG over a Neo4j vector index.
+
+## Commands
+
+```bash
+npm run infra:up     # start Neo4j and wait until healthy (Bolt 7688, Browser 7475)
+npm run seed         # ingest data/Profile.pdf into Neo4j
+npm run chat         # start the chat (in-chat commands: /clear, /exit)
+npm run api          # start the API on 127.0.0.1:3333 (API_HOST, API_PORT, CORS_ORIGIN)
+npm run infra:down   # stop Neo4j
+
+npm test             # all tests
+npm run typecheck    # tsc --noEmit (there is no build step and no linter)
+
+node --test test/env.test.ts                                  # one test file
+node --test --test-name-pattern="openrouter" test/env.test.ts # tests matching a name
+```
+
+Setup: copy `.env.example` to `.env`. `seed` and `chat` load it with `--env-file` and fail if it is missing. `NEO4J_PASSWORD` is blank in the example and fails validation; set it to `password` to match `docker-compose.yml`. With the default provider, Ollama must be running with `OLLAMA_MODEL` pulled.
+
+## Architecture
+
+Entry points in `src/cli/` share one pipeline, wired through `src/infra/`:
+
+- **Ingest** (`seed.ts` → `rag/ingest.ts`): load and split the PDF, delete all `Chunk` nodes, then insert in batches.
+- **Query** (`chat.ts` or `api.ts` → `agent/assistant.ts`): the agent calls the `search_profile` tool → `rag/retriever.ts` → Neo4j. `agent/stream-reply.ts` turns the agent stream into `tool` and `text` events, which the CLI prints and the API sends as SSE.
+
+`POST /api/chat/stream` (`api/app.ts`) takes `{ message, threadId? }` and emits the SSE events `start` (with `threadId`), `tool`, `text`, then `done` or `error`. Clients send the `threadId` back to keep the conversation. `buildApp` receives the reply streamer as an argument, so tests run without Neo4j or an LLM. Client disconnects abort the agent run.
+
+Things that span files:
+
+- **Config is lazy.** `getConfig()` in `src/config/index.ts` parses env on first call and is the only reader of `process.env`. Keep it out of module top level: tests import `src/rag/retriever.ts` without any env set. Tunables (chunking, `topK`, index name) live here, not in env.
+- **`getVectorStore(mode)` is a per-process singleton, and `mode` only applies to the first call.** `"ingest"` may create the index; `"read"` throws `VectorIndexNotFoundError` if it is missing. `chat.ts` calls it at startup so a missing index or a down Neo4j fails early, with hints from `describeFatalError`.
+- **`similarity.minScore` is intentionally 0.** Measured scores do not separate relevant from unrelated chunks, so a higher floor drops real answers. Recalibrate if the embedding model changes.
+- **Language split.** The system prompt and user-facing strings are in Portuguese. The profile is in English, so the `search_profile` schema tells the model to translate queries to English. Keep both when editing either side.
+- **The grounding rules live in `agent/system-prompt.ts`**, including treating retrieved chunks as data, not instructions.
+- **LLM provider is chosen statically** by `LLM_PROVIDER` in `infra/chat-model.ts`. There is no runtime fallback, despite the `Problem with Ollama` log printed on the OpenRouter path.
+- **Conversation memory is in-process** (`MemorySaver`). `/clear` just starts a new thread id; nothing survives a restart, and API threads are never evicted.
+- **`get_weather` is a stub** that always returns the same sunny answer.
+
+## Conventions and gotchas
+
+- TypeScript runs directly on Node via type stripping. `erasableSyntaxOnly` rules out enums and constructor parameter properties, and relative imports must use the `.ts` extension. `verbatimModuleSyntax` requires `import type` for type-only imports.
+- `.npmrc` sets `legacy-peer-deps=true`; npm installs rely on it.
+- Neo4j data is a bind mount at `./neo4j/`, so `infra:down --volumes` does not wipe it. Delete that directory for a clean database.
+- `seed` deletes `Chunk` nodes but not the vector index, so the index survives re-seeding.
