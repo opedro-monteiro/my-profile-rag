@@ -29,9 +29,9 @@ Setup: copy `.env.example` to `.env`. `seed` and `chat` load it with `--env-file
 Entry points in `src/cli/` share one pipeline, wired through `src/infra/`:
 
 - **Ingest** (`seed.ts` → `rag/ingest.ts`): load and split the PDF, delete all `Chunk` nodes, then insert in batches.
-- **Query** (`chat.ts` or `api.ts` → `agent/assistant.ts`): the agent calls the `search_profile` tool → `rag/retriever.ts` → Neo4j. `agent/stream-reply.ts` turns the agent stream into `tool` and `text` events, which the CLI prints and the API sends as SSE.
+- **Query** (`chat.ts` or `api.ts` → `agent/assistant.ts`): the agent calls the `search_profile` tool → `rag/retriever.ts` → Neo4j. `agent/stream-reply.ts` turns the agent stream (`messages` + `updates` modes) into `tool`, `tool_input`, `tool_result`, `reasoning`, `text` and `usage` events. The CLI prints only `tool` and `text`; the API sends all of them as SSE.
 
-`POST /api/chat/stream` (`api/app.ts`) takes `{ message, threadId? }` and emits the SSE events `start` (with `threadId`), `tool`, `text`, then `done` or `error`. Clients send the `threadId` back to keep the conversation. `buildApp` receives the reply streamer as an argument, so tests run without Neo4j or an LLM. Client disconnects abort the agent run.
+`POST /api/chat/stream` (`api/app.ts`) takes `{ message, threadId?, model?: { provider, model, think? } }` and emits `start` (with `threadId`), the reply events above, then `done` or `error`. `GET /api/tools` lists the agent's tools with their JSON schema. Clients send the `threadId` back to keep the conversation. `buildApp` receives the reply streamer as an argument, so tests run without Neo4j or an LLM. Client disconnects abort the agent run.
 
 Things that span files:
 
@@ -40,7 +40,7 @@ Things that span files:
 - **`similarity.minScore` is intentionally 0.** Measured scores do not separate relevant from unrelated chunks, so a higher floor drops real answers. Recalibrate if the embedding model changes.
 - **Language split.** The system prompt and user-facing strings are in Portuguese. The profile is in English, so the `search_profile` schema tells the model to translate queries to English. Keep both when editing either side.
 - **The grounding rules live in `agent/system-prompt.ts`**, including treating retrieved chunks as data, not instructions.
-- **LLM provider is chosen statically** by `LLM_PROVIDER` in `infra/chat-model.ts`. There is no runtime fallback, despite the `Problem with Ollama` log printed on the OpenRouter path.
+- **The model is chosen per request.** `createAssistantPool()` in `agent/assistant.ts` caches one agent per provider/model/think, all sharing one `MemorySaver`, so a thread survives a model switch. Without `model` in the body, `LLM_PROVIDER` decides. OpenRouter without `OPENROUTER_API_KEY` throws `ModelUnavailableError`, whose message reaches the client; other errors stay generic. The web's model list lives in `web/src/config/models.ts`.
 - **Conversation memory is in-process** (`MemorySaver`). `/clear` just starts a new thread id; nothing survives a restart, and API threads are never evicted.
 - **`get_weather` is a stub** that always returns the same sunny answer.
 
