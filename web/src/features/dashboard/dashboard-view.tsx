@@ -36,7 +36,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { findModel, MODELS } from "@/config/models"
+import { modelLabel } from "@/config/models"
 import { getToolMeta } from "@/config/tools"
 import { useChatStore } from "@/features/chat/chat-store"
 import { formatDuration, formatNumber, formatTokens } from "@/lib/format"
@@ -357,39 +357,32 @@ export function DashboardView() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {models.map((row) => {
-                        const known = MODELS.some(
-                          (model) => model.id === row.modelId
-                        )
-                        return (
-                          <TableRow key={row.modelId}>
-                            <TableCell>
-                              <div className="flex flex-col">
-                                <span className="font-medium">
-                                  {known
-                                    ? findModel(row.modelId).label
-                                    : row.modelId}
-                                </span>
-                                <span className="font-mono text-xs text-muted-foreground">
-                                  {row.provider}
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {row.replies}
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-xs tabular-nums">
-                              {formatNumber(row.inputTokens)}
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-xs tabular-nums">
-                              {formatNumber(row.outputTokens)}
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-xs tabular-nums">
-                              {formatDuration(row.durationMs / row.replies)}
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })}
+                      {models.map((row) => (
+                        <TableRow key={row.modelId}>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium">
+                                {modelLabel(row.modelId)}
+                              </span>
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {row.provider}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {row.replies}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs tabular-nums">
+                            {formatNumber(row.inputTokens)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs tabular-nums">
+                            {formatNumber(row.outputTokens)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs tabular-nums">
+                            {formatDuration(row.durationMs / row.replies)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
                     </TableBody>
                   </Table>
                 </div>

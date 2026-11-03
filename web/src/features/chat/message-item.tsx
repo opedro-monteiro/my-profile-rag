@@ -21,7 +21,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { findModel } from "@/config/models"
+import { modelLabel } from "@/config/models"
 import { formatDuration, formatNumber, formatTokens } from "@/lib/format"
 import { transitions } from "@/lib/motion"
 import { AgentSteps } from "./agent-steps"
@@ -92,7 +92,6 @@ function AssistantFooter({
   onRetry: () => void
   pinned: boolean
 }) {
-  const model = findModel(message.model.id)
   const duration =
     message.finishedAt !== undefined
       ? formatDuration(message.finishedAt - message.startedAt)
@@ -112,7 +111,7 @@ function AssistantFooter({
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="ml-1 cursor-default font-mono text-[11px] tabular-nums">
-            {model.label}
+            {modelLabel(message.model.id)}
             {message.usage
               ? ` · ${formatTokens(message.usage.totalTokens)} tokens`
               : ""}

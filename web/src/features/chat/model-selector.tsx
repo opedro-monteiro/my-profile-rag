@@ -4,6 +4,7 @@ import {
   IconChevronDown,
   IconCloud,
   IconCpu,
+  IconLock,
 } from "@tabler/icons-react"
 import {
   DropdownMenu,
@@ -79,10 +80,17 @@ export function ModelSelector({
                     <DropdownMenuRadioItem
                       key={item.id}
                       value={item.id}
+                      disabled={item.locked}
                       className="items-start"
                     >
                       <span className="flex min-w-0 flex-col gap-0.5">
                         <span className="flex items-center gap-1.5">
+                          {item.locked ? (
+                            <IconLock
+                              aria-label="Locked"
+                              className="text-muted-foreground"
+                            />
+                          ) : null}
                           {item.label}
                           {item.supportsThinking ? (
                             <IconBrain
@@ -92,8 +100,9 @@ export function ModelSelector({
                           ) : null}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {item.description} ·{" "}
-                          {formatTokens(item.contextWindow)} context
+                          {item.locked
+                            ? "Not available yet"
+                            : `${item.description} · ${formatTokens(item.contextWindow)} context`}
                         </span>
                       </span>
                     </DropdownMenuRadioItem>

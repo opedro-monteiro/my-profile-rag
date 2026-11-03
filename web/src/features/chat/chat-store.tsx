@@ -1,5 +1,5 @@
 import * as React from "react"
-import { findModel, type ModelOption } from "@/config/models"
+import { resolveModel, type ModelOption } from "@/config/models"
 import { postChatStream } from "@/lib/api"
 import { readSse } from "@/lib/sse"
 import { readJson, writeJson } from "@/lib/storage"
@@ -105,7 +105,7 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
     conversationsRef.current = conversations
   }, [conversations])
 
-  const model = findModel(preferences.modelId)
+  const model = resolveModel(preferences.modelId)
   const think = Boolean(preferences.think && model.supportsThinking)
 
   React.useEffect(() => {
