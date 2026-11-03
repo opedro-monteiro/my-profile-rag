@@ -12,7 +12,8 @@ Chat assistant that answers questions about Pedro Monteiro from `data/Profile.pd
 npm run infra:up     # start Neo4j + Postgres, wait until healthy, apply migrations (Bolt 7688, Browser 7475, Postgres 5434)
 npm run seed         # ingest data/Profile.pdf into Neo4j
 npm run chat         # start the chat (in-chat commands: /clear, /exit)
-npm run api          # start the API on 127.0.0.1:3333 (API_HOST, API_PORT, CORS_ORIGIN)
+npm run api          # start the API on 127.0.0.1:3333 (API_HOST, API_PORT, CORS_ORIGIN); requires .env
+npm start            # production start: .env optional, PORT overrides API_PORT, API_HOST defaults to 0.0.0.0
 npm run infra:down   # stop the containers (keeps data)
 npm run infra:reset  # stop and delete the Postgres volume
 
@@ -36,9 +37,9 @@ Entry points in `src/cli/` share one pipeline, wired through `src/infra/`:
 - **Ingest** (`seed.ts` → `rag/ingest.ts`): load and split the PDF, delete all `Chunk` nodes, then insert in batches.
 - **Query** (`chat.ts` or `api.ts` → `agent/assistant.ts`): the agent calls the `search_profile` tool → `rag/retriever.ts` → Neo4j. `agent/stream-reply.ts` turns the agent stream (`messages` + `updates` modes) into `tool`, `tool_input`, `tool_result`, `reasoning`, `text` and `usage` events. The CLI prints only `tool` and `text`; the API sends all of them as SSE.
 
-**Usage stats** live in Postgres (Drizzle, `src/db/schema.ts`: `chat_replies` + `tool_calls`). `buildApp` takes an optional `usage: { store, defaultModel }`; when set, `usage/track-usage.ts` wraps the reply stream, sums the `usage` events of every model call, and writes one row per reply when the stream ends (`done`, `error` or `stopped`). A failed write is logged and never breaks the reply. `GET /api/usage?range=7d|30d|all` serves the rows to the web dashboard, which no longer keeps stats in `localStorage`. Only the API needs Postgres; `chat` and `seed` do not connect, but `DATABASE_URL` is still validated.
+**Usage stats** live in Postgres (Drizzle, `src/db/schema.ts`: `chat_replies` + `tool_calls`). `buildApp` takes an optional `usage: { store, defaultModel }`; when set, `usage/track-usage.ts` wraps the reply stream, sums the `usage` events of every model call, and writes one row per reply when the stream ends (`done`, `error` or `stopped`). A failed write is logged and never breaks the reply. The API applies pending migrations on boot (`infra/run-migrations.ts`), so deploys need no `drizzle-kit`. `GET /api/usage?range=7d|30d|all` serves the rows to the web dashboard, which no longer keeps stats in `localStorage`. Only the API needs Postgres; `chat` and `seed` do not connect, but `DATABASE_URL` is still validated.
 
-`POST /api/chat/stream` (`api/app.ts`) takes `{ message, threadId?, model?: { provider, model, think? } }` and emits `start` (with `threadId`), the reply events above, then `done` or `error`. `GET /api/tools` lists the agent's tools with their JSON schema. Clients send the `threadId` back to keep the conversation. `buildApp` receives the reply streamer as an argument, so tests run without Neo4j or an LLM. Client disconnects abort the agent run.
+`POST /api/chat/stream` (`api/app.ts`) takes `{ message, threadId?, model?: { provider, model, think? } }` and emits `start` (with `threadId`), the reply events above, then `done` or `error`. `GET /api/tools` lists the agent's tools with their JSON schema. `GET /health` returns `{ status: "ok" }`. Clients send the `threadId` back to keep the conversation. `buildApp` receives the reply streamer as an argument, so tests run without Neo4j or an LLM. Client disconnects abort the agent run.
 
 Things that span files:
 

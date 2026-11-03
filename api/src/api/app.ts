@@ -117,6 +117,8 @@ export async function buildApp({
 
   await app.register(cors, { origin: corsOrigin, methods: ["GET", "POST"] });
 
+  app.get("/health", () => ({ status: "ok" }));
+
   app.get("/api/tools", () => ({ tools }));
 
   if (usage)

@@ -8,7 +8,7 @@ function buildConfig(env: Env) {
   return Object.freeze({
     api: {
       host: env.API_HOST,
-      port: env.API_PORT,
+      port: env.PORT ?? env.API_PORT,
       corsOrigin: env.CORS_ORIGIN,
     },
     llm: {
@@ -41,6 +41,7 @@ function buildConfig(env: Env) {
     database: {
       url: env.DATABASE_URL,
       maxConnections: 10,
+      migrationsFolder: "./drizzle",
     },
     embedding: {
       modelName: env.EMBEDDING_MODEL,

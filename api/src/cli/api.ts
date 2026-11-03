@@ -9,6 +9,7 @@ import {
   closeDatabase,
   getDatabase,
 } from "../infra/database.ts";
+import { runMigrations } from "../infra/run-migrations.ts";
 import { closeVectorStore, getVectorStore } from "../infra/vector-store.ts";
 import { tools } from "../tools/index.ts";
 import { createUsageStore } from "../usage/usage-store.ts";
@@ -26,6 +27,7 @@ async function start(): Promise<void> {
   const { host, port, corsOrigin } = getConfig().api;
 
   await getVectorStore();
+  await runMigrations();
   await checkDatabase();
   const getAssistant = createAssistantPool();
   getAssistant();

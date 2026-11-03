@@ -6,6 +6,7 @@
   "scripts": {
     "chat": "node --no-warnings --env-file .env src/cli/chat.ts",
     "api": "node --no-warnings --env-file .env src/cli/api.ts",
+    "start": "node --no-warnings --env-file-if-exists=.env src/cli/api.ts",
     "seed": "node --no-warnings --env-file .env src/cli/seed.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
@@ -17,6 +18,9 @@
     "db:studio": "drizzle-kit studio"
   },
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",

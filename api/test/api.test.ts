@@ -264,3 +264,12 @@ test("serves the recorded usage for a range", async () => {
   assert.equal(usage.since(), undefined);
   assert.equal(invalid.statusCode, 400);
 });
+
+test("answers the health check", async () => {
+  const app = await buildChatApp(async function* () {});
+
+  const response = await app.inject({ method: "GET", url: "/health" });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { status: "ok" });
+});

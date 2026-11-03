@@ -37,3 +37,12 @@ test("requires a postgres database url", () => {
     /DATABASE_URL/,
   );
 });
+
+test("binds to every interface by default", () => {
+  assert.equal(parseEnv(validEnv).API_HOST, "0.0.0.0");
+});
+
+test("reads the platform port when it is set", () => {
+  assert.equal(parseEnv({ ...validEnv, PORT: "8080" }).PORT, 8080);
+  assert.equal(parseEnv(validEnv).PORT, undefined);
+});
