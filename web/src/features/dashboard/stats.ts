@@ -37,7 +37,6 @@ function dayKey(timestamp: number) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 }
 
-/** One row per calendar day in the range, including days with no usage. */
 export function tokensByDay(
   records: UsageRecord[],
   range: Range,

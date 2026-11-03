@@ -38,10 +38,8 @@ export interface AppOptions {
   streamReply: ReplyStreamer;
   tools?: ToolDescriptor[];
   logger?: boolean;
-  /** Persists each reply's usage and serves it on GET /api/usage. */
   usage?: {
     store: UsageStore;
-    /** The model the agent uses when the request names none. */
     defaultModel: ModelSelection;
   };
 }

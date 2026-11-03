@@ -12,7 +12,6 @@ interface Loaded {
   error?: string
 }
 
-/** Usage recorded by the API, refetched when the range or `refreshKey` changes. */
 export function useUsage(range: UsageRange, refreshKey?: unknown) {
   const [attempt, setAttempt] = React.useState(0)
   const [loaded, setLoaded] = React.useState<Loaded | null>(null)
@@ -46,7 +45,6 @@ export function useUsage(range: UsageRange, refreshKey?: unknown) {
     state = { status: "error", error: loaded.error }
   else if (loaded?.key === key && loaded.records)
     state = { status: "ready", records: loaded.records }
-  // Keep the previous numbers on screen while the new ones load.
   else state = { status: "loading", records: loaded?.records }
 
   return { state, reload }
