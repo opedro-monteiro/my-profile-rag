@@ -37,3 +37,12 @@ export function formatRelative(timestamp: number, now = Date.now()) {
 
   return "just now"
 }
+
+const dayLabel = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+})
+
+export function formatDay(day: string) {
+  return dayLabel.format(new Date(`${day}T00:00`))
+}
