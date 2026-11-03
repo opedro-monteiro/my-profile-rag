@@ -7,22 +7,9 @@ import { applyEvent, settleSteps } from "./apply-event"
 import type { AssistantMessage, ChatMessage, Conversation } from "./types"
 
 const CONVERSATIONS_KEY = "profile-rag:conversations"
-const USAGE_KEY = "profile-rag:usage"
 const PREFERENCES_KEY = "profile-rag:preferences"
 const TITLE_LENGTH = 48
 const PERSIST_DELAY_MS = 400
-
-export interface UsageRecord {
-  at: number
-  modelId: string
-  provider: string
-  inputTokens: number
-  outputTokens: number
-  totalTokens: number
-  durationMs: number
-  tools: string[]
-  status: AssistantMessage["status"]
-}
 
 interface Preferences {
   modelId: string
@@ -34,7 +21,6 @@ interface ChatStore {
   activeId: string | null
   active: Conversation | null
   streamingId: string | null
-  usage: UsageRecord[]
   model: ModelOption
   think: boolean
   setModel: (id: string) => void
@@ -44,7 +30,6 @@ interface ChatStore {
   send: (text: string) => void
   retry: (assistantId: string) => void
   stop: () => void
-  clearUsage: () => void
 }
 
 const ChatStoreContext = React.createContext<ChatStore | null>(null)
@@ -52,22 +37,6 @@ const ChatStoreContext = React.createContext<ChatStore | null>(null)
 function makeTitle(text: string) {
   const line = text.trim().split("\n")[0]
   return line.length > TITLE_LENGTH ? `${line.slice(0, TITLE_LENGTH)}…` : line
-}
-
-function toUsageRecord(message: AssistantMessage): UsageRecord {
-  return {
-    at: message.startedAt,
-    modelId: message.model.id,
-    provider: message.model.provider,
-    inputTokens: message.usage?.inputTokens ?? 0,
-    outputTokens: message.usage?.outputTokens ?? 0,
-    totalTokens: message.usage?.totalTokens ?? 0,
-    durationMs: (message.finishedAt ?? message.startedAt) - message.startedAt,
-    tools: message.steps.flatMap((step) =>
-      step.kind === "tool" ? [step.name] : []
-    ),
-    status: message.status,
-  }
 }
 
 /** Streams left mid-way by a reload can never finish, so they are closed. */
@@ -91,9 +60,6 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
   const [conversations, setConversations] = React.useState(restoreConversations)
   const [activeId, setActiveId] = React.useState<string | null>(null)
   const [streamingId, setStreamingId] = React.useState<string | null>(null)
-  const [usage, setUsage] = React.useState(() =>
-    readJson<UsageRecord[]>(USAGE_KEY, [])
-  )
   const [preferences, setPreferences] = React.useState(() =>
     readJson<Preferences>(PREFERENCES_KEY, { modelId: "", think: false })
   )
@@ -116,7 +82,6 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timeout)
   }, [conversations])
 
-  React.useEffect(() => writeJson(USAGE_KEY, usage), [usage])
   React.useEffect(() => writeJson(PREFERENCES_KEY, preferences), [preferences])
   React.useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -223,7 +188,6 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
         final = { ...final, finishedAt: Date.now() }
         const settled = final
         patch(() => settled)
-        setUsage((current) => [...current, toUsageRecord(settled)])
         if (abortRef.current === controller) abortRef.current = null
         setStreamingId(null)
       }
@@ -312,8 +276,6 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
     []
   )
 
-  const clearUsage = React.useCallback(() => setUsage([]), [])
-
   const active = conversations.find((item) => item.id === activeId) ?? null
 
   const value = React.useMemo<ChatStore>(
@@ -322,7 +284,6 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
       activeId,
       active,
       streamingId,
-      usage,
       model,
       think,
       setModel,
@@ -332,14 +293,12 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
       send,
       retry,
       stop,
-      clearUsage,
     }),
     [
       conversations,
       activeId,
       active,
       streamingId,
-      usage,
       model,
       think,
       setModel,
@@ -349,7 +308,6 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
       send,
       retry,
       stop,
-      clearUsage,
     ]
   )
 

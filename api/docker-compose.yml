@@ -1,5 +1,4 @@
-version: "3.8"
-
+# Local development only. Values come from .env, with defaults that match .env.example.
 services:
   neo4j_my_profile_rag:
     image: neo4j:5.14.0-community
@@ -11,13 +10,35 @@ services:
       - ./neo4j/plugins:/plugins
       - ./import:/var/lib/neo4j/import
     ports:
-      - "7475:7474" # Neo4j Browser
-      - "7688:7687" # Bolt Protocol
+      - "127.0.0.1:7475:7474" # Neo4j Browser
+      - "127.0.0.1:7688:7687" # Bolt Protocol
     environment:
-      - NEO4J_AUTH=neo4j/password
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}
       - NEO4JLABS_PLUGINS=["apoc"]
       - NEO4J_apoc_import_file_enabled=true
       # CALL apoc.export.csv.all("/var/lib/neo4j/import/neo4j-export.csv", {})
       # mv /var/lib/neo4j/import/neo4j-export.csv /data/neo4j-export.csv
       - NEO4J_apoc_export_file_enabled=true
       - NEO4J_apoc_import_file_use__neo4j__config=true
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: my-rag-folio-db
+    restart: unless-stopped
+    ports:
+      # 5432 and 5433 are taken by other local projects.
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-my_rag_folio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-my_rag_folio}
+      POSTGRES_DB: ${POSTGRES_DB:-my_rag_folio_db}
+    volumes:
+      - my_rag_folio_db_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  my_rag_folio_db_pgdata:

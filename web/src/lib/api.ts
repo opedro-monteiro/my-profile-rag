@@ -51,3 +51,29 @@ export async function postChatStream({
 
   return response.body
 }
+
+export type UsageRange = "7d" | "30d" | "all"
+
+/** One assistant reply, as recorded by the API in Postgres. */
+export interface UsageRecord {
+  at: number
+  modelId: string
+  provider: string
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  durationMs: number
+  tools: string[]
+  status: "done" | "error" | "stopped"
+}
+
+export async function fetchUsage(range: UsageRange, signal?: AbortSignal) {
+  const response = await fetch(`${API_URL}/api/usage?range=${range}`, {
+    signal,
+  })
+  if (!response.ok)
+    throw new Error(`Request failed with status ${response.status}`)
+
+  const body = (await response.json()) as { records: UsageRecord[] }
+  return body.records
+}

@@ -4,6 +4,8 @@ import { test } from "node:test";
 import type { ReplyEvent } from "../src/agent/stream-reply.ts";
 import { buildApp, type ReplyStreamer } from "../src/api/app.ts";
 import { ModelUnavailableError } from "../src/infra/chat-model.ts";
+import type { ReplyUsage } from "../src/usage/track-usage.ts";
+import type { UsageStore } from "../src/usage/usage-store.ts";
 
 const THREAD_ID = "6f1c2a3e-8b4d-4c55-9a10-2d3e4f5a6b7c";
 
@@ -164,4 +166,101 @@ test("lists the registered tools", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { tools });
+});
+
+function fakeUsageStore() {
+  const saved: ReplyUsage[] = [];
+  let since: Date | undefined;
+  const store: UsageStore = {
+    async record(usage) {
+      saved.push(usage);
+    },
+    async list(from) {
+      since = from;
+      return [];
+    },
+  };
+  return { store, saved, since: () => since };
+}
+
+const DEFAULT_MODEL = { provider: "ollama", model: "gemma4:e2b" } as const;
+
+test("records the usage of each reply", async () => {
+  const usage = fakeUsageStore();
+  const app = await buildApp({
+    corsOrigin: "*",
+    usage: { store: usage.store, defaultModel: DEFAULT_MODEL },
+    streamReply: async function* (): AsyncGenerator<ReplyEvent> {
+      yield { type: "tool", id: "call-1", name: "search_profile" };
+      yield { type: "usage", inputTokens: 100, outputTokens: 10, totalTokens: 110 };
+      yield {
+        type: "tool_result",
+        id: "call-1",
+        name: "search_profile",
+        output: "…",
+        status: "success",
+      };
+      yield { type: "usage", inputTokens: 300, outputTokens: 40, totalTokens: 340 };
+      yield { type: "text", text: "Olá" };
+    },
+  });
+
+  await postChat(app, { message: "oi", threadId: THREAD_ID });
+
+  assert.equal(usage.saved.length, 1);
+  assert.partialDeepStrictEqual(usage.saved[0], {
+    threadId: THREAD_ID,
+    provider: "ollama",
+    model: "gemma4:e2b",
+    status: "done",
+    inputTokens: 400,
+    outputTokens: 50,
+    totalTokens: 450,
+    modelCalls: 2,
+    tools: [{ callId: "call-1", name: "search_profile", status: "success" }],
+  });
+});
+
+test("records failed replies with the requested model", async () => {
+  const usage = fakeUsageStore();
+  const app = await buildApp({
+    corsOrigin: "*",
+    usage: { store: usage.store, defaultModel: DEFAULT_MODEL },
+    streamReply: async function* () {
+      throw new Error("boom");
+    },
+  });
+
+  await postChat(app, {
+    message: "oi",
+    model: { provider: "openrouter", model: "z-ai/glm-5.3-flash" },
+  });
+
+  assert.partialDeepStrictEqual(usage.saved[0], {
+    provider: "openrouter",
+    model: "z-ai/glm-5.3-flash",
+    status: "error",
+    tools: [],
+  });
+});
+
+test("serves the recorded usage for a range", async () => {
+  const usage = fakeUsageStore();
+  const app = await buildApp({
+    corsOrigin: "*",
+    usage: { store: usage.store, defaultModel: DEFAULT_MODEL },
+    streamReply: async function* () {},
+  });
+
+  const week = await app.inject({ method: "GET", url: "/api/usage" });
+  const weekSince = usage.since();
+  const all = await app.inject({ method: "GET", url: "/api/usage?range=all" });
+  const invalid = await app.inject({ method: "GET", url: "/api/usage?range=1y" });
+
+  assert.equal(week.statusCode, 200);
+  assert.deepEqual(week.json(), { records: [] });
+  assert.ok(weekSince && Date.now() - weekSince.getTime() >= 7 * 86_400_000 - 1000);
+  assert.equal(all.statusCode, 200);
+  assert.equal(usage.since(), undefined);
+  assert.equal(invalid.statusCode, 400);
 });

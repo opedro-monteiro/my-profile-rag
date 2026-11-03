@@ -1,8 +1,11 @@
 import * as React from "react"
 import { animate, motion, useReducedMotion } from "motion/react"
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
-import { IconChartBar, IconTrash } from "@tabler/icons-react"
-import { toast } from "sonner"
+import {
+  IconChartBar,
+  IconPlugConnectedX,
+  IconRefresh,
+} from "@tabler/icons-react"
 import { PageHeader } from "@/components/layout/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -38,17 +41,12 @@ import {
 } from "@/components/ui/tooltip"
 import { modelLabel } from "@/config/models"
 import { getToolMeta } from "@/config/tools"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useChatStore } from "@/features/chat/chat-store"
 import { formatDuration, formatNumber, formatTokens } from "@/lib/format"
 import { fadeUp, stagger } from "@/lib/motion"
-import {
-  byModel,
-  byTool,
-  filterByRange,
-  summarize,
-  tokensByDay,
-  type Range,
-} from "./stats"
+import { byModel, byTool, summarize, tokensByDay, type Range } from "./stats"
+import { useUsage } from "./use-usage"
 
 const CHART_CONFIG = {
   input: { label: "Input", color: "var(--chart-2)" },
@@ -59,7 +57,6 @@ const DAY_LABEL = new Intl.DateTimeFormat("en", {
   month: "short",
   day: "numeric",
 })
-const CONFIRM_WINDOW_MS = 3000
 
 function AnimatedNumber({
   value,
@@ -138,39 +135,24 @@ function Figure({
   )
 }
 
-function ResetButton({ onConfirm }: { onConfirm: () => void }) {
-  const [armed, setArmed] = React.useState(false)
+const NO_RECORDS: never[] = []
 
-  React.useEffect(() => {
-    if (!armed) return
-    const timeout = setTimeout(() => setArmed(false), CONFIRM_WINDOW_MS)
-    return () => clearTimeout(timeout)
-  }, [armed])
-
+function DashboardSkeleton() {
   return (
-    <Button
-      variant={armed ? "destructive" : "ghost"}
-      size="sm"
-      onClick={() => {
-        if (!armed) return setArmed(true)
-        setArmed(false)
-        onConfirm()
-      }}
-    >
-      <IconTrash data-icon="inline-start" />
-      {armed ? "Click again to reset" : "Reset stats"}
-    </Button>
+    <div className="flex flex-col gap-10" aria-busy="true">
+      <Skeleton className="h-28 w-full rounded-lg" />
+      <Skeleton className="h-72 w-full rounded-lg" />
+    </div>
   )
 }
 
 export function DashboardView() {
-  const { usage, clearUsage } = useChatStore()
+  const { streamingId } = useChatStore()
   const [range, setRange] = React.useState<Range>("7d")
+  const { state, reload } = useUsage(range, streamingId)
 
-  const records = React.useMemo(
-    () => filterByRange(usage, range),
-    [usage, range]
-  )
+  const records =
+    state.status === "error" ? NO_RECORDS : (state.records ?? NO_RECORDS)
   const summary = React.useMemo(() => summarize(records), [records])
   const days = React.useMemo(
     () => tokensByDay(records, range),
@@ -179,16 +161,24 @@ export function DashboardView() {
   const models = React.useMemo(() => byModel(records), [records])
   const tools = React.useMemo(() => byTool(records), [records])
   const topTool = tools[0]?.calls ?? 0
-
-  function reset() {
-    clearUsage()
-    toast.success("Usage stats cleared")
-  }
+  const loadingFirstTime = state.status === "loading" && !state.records
 
   return (
     <div className="flex min-h-dvh flex-col">
       <PageHeader title="Dashboard">
-        {usage.length > 0 ? <ResetButton onConfirm={reset} /> : null}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Reload usage"
+              onClick={reload}
+            >
+              <IconRefresh />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Reload from the API</TooltipContent>
+        </Tooltip>
       </PageHeader>
 
       <motion.div
@@ -203,7 +193,7 @@ export function DashboardView() {
               Usage
             </h1>
             <p className="text-muted-foreground">
-              Tokens and replies recorded in this browser.
+              Tokens and replies recorded by the API, across every visitor.
             </p>
           </motion.div>
           <motion.div variants={fadeUp}>
@@ -222,7 +212,26 @@ export function DashboardView() {
           </motion.div>
         </div>
 
-        {records.length === 0 ? (
+        {state.status === "error" ? (
+          <motion.div variants={fadeUp}>
+            <Empty className="border border-dashed">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <IconPlugConnectedX />
+                </EmptyMedia>
+                <EmptyTitle>Usage unavailable</EmptyTitle>
+                <EmptyDescription>{state.error}</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button variant="outline" size="sm" onClick={reload}>
+                  Try again
+                </Button>
+              </EmptyContent>
+            </Empty>
+          </motion.div>
+        ) : loadingFirstTime ? (
+          <DashboardSkeleton />
+        ) : records.length === 0 ? (
           <motion.div variants={fadeUp}>
             <Empty className="border border-dashed">
               <EmptyHeader>

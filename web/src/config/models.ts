@@ -23,6 +23,7 @@ export const MODELS: ModelOption[] = [
     label: "Gemma 4 E2B",
     description: "Local on the desktop. The default.",
     contextWindow: 128_000,
+    locked: true,
   },
   {
     id: "glm-4.7-flash:latest",
@@ -31,7 +32,7 @@ export const MODELS: ModelOption[] = [
     description: "Local and fast.",
     contextWindow: 128_000,
     supportsThinking: true,
-    locked: true,
+    locked: false,
   },
   {
     id: "qwen2.5-coder:14b",

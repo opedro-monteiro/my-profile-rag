@@ -1,23 +1,12 @@
-import type { UsageRecord } from "@/features/chat/chat-store"
+import type { UsageRange as Range, UsageRecord } from "@/lib/api"
 
-export type Range = "7d" | "30d" | "all"
+export type { Range }
 
 const DAY_MS = 86_400_000
 
 export const RANGE_DAYS: Record<Exclude<Range, "all">, number> = {
   "7d": 7,
   "30d": 30,
-}
-
-export function filterByRange(
-  records: UsageRecord[],
-  range: Range,
-  now = Date.now()
-) {
-  if (range === "all") return records
-
-  const since = now - RANGE_DAYS[range] * DAY_MS
-  return records.filter((record) => record.at >= since)
 }
 
 export function summarize(records: UsageRecord[]) {

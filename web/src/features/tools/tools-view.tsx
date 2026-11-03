@@ -23,17 +23,18 @@ import { useChatStore } from "@/features/chat/chat-store"
 import { API_URL, type ToolDescriptor } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
 import { fadeUp, stagger } from "@/lib/motion"
+import { useUsage } from "@/features/dashboard/use-usage"
 import { useTools } from "./use-tools"
 
 function ToolEntry({
   tool,
   index,
   calls,
-}: {
+}: Readonly<{
   tool: ToolDescriptor
   index: number
   calls: number
-}) {
+}>) {
   const meta = getToolMeta(tool.name)
   const Icon = meta.icon
   const properties = Object.entries(tool.parameters.properties ?? {})
@@ -137,11 +138,13 @@ function ToolsSkeleton() {
 
 export function ToolsView() {
   const { state, reload } = useTools()
-  const { usage } = useChatStore()
+  const { streamingId } = useChatStore()
+  const { state: usage } = useUsage("all", streamingId)
 
   const calls = React.useMemo(() => {
     const counts = new Map<string, number>()
-    for (const record of usage)
+    const records = usage.status === "error" ? [] : (usage.records ?? [])
+    for (const record of records)
       for (const name of record.tools)
         counts.set(name, (counts.get(name) ?? 0) + 1)
     return counts

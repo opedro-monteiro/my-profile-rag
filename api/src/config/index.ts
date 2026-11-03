@@ -38,6 +38,10 @@ function buildConfig(env: Env) {
       textNodeProperties: ["text"],
       nodeLabel: "Chunk",
     },
+    database: {
+      url: env.DATABASE_URL,
+      maxConnections: 10,
+    },
     embedding: {
       modelName: env.EMBEDDING_MODEL,
       pretrainedOptions: {

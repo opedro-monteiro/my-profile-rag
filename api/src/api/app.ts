@@ -7,8 +7,14 @@ import {
   ModelUnavailableError,
   type ModelSelection,
 } from "../infra/chat-model.ts";
+import { trackUsage } from "../usage/track-usage.ts";
+import type { UsageStore } from "../usage/usage-store.ts";
 
 const GENERIC_ERROR_MESSAGE = "Erro ao gerar a resposta.";
+const DAY_MS = 86_400_000;
+const RANGE_DAYS = { "7d": 7, "30d": 30 } as const;
+
+type UsageRange = keyof typeof RANGE_DAYS | "all";
 
 export interface ReplyRequest {
   message: string;
@@ -32,6 +38,12 @@ export interface AppOptions {
   streamReply: ReplyStreamer;
   tools?: ToolDescriptor[];
   logger?: boolean;
+  /** Persists each reply's usage and serves it on GET /api/usage. */
+  usage?: {
+    store: UsageStore;
+    /** The model the agent uses when the request names none. */
+    defaultModel: ModelSelection;
+  };
 }
 
 interface ChatBody {
@@ -57,6 +69,14 @@ const chatBodySchema = {
         think: { type: "boolean" },
       },
     },
+  },
+};
+
+const usageQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    range: { type: "string", enum: ["7d", "30d", "all"], default: "7d" },
   },
 };
 
@@ -93,12 +113,28 @@ export async function buildApp({
   streamReply,
   tools = [],
   logger = false,
+  usage,
 }: AppOptions) {
   const app = Fastify({ logger, forceCloseConnections: true });
 
   await app.register(cors, { origin: corsOrigin, methods: ["GET", "POST"] });
 
   app.get("/api/tools", () => ({ tools }));
+
+  if (usage)
+    app.get<{ Querystring: { range: UsageRange } }>(
+      "/api/usage",
+      { schema: { querystring: usageQuerySchema } },
+      async (request) => {
+        const { range } = request.query;
+        const since =
+          range === "all"
+            ? undefined
+            : new Date(Date.now() - RANGE_DAYS[range] * DAY_MS);
+
+        return { records: await usage.store.list(since) };
+      },
+    );
 
   app.post<{ Body: ChatBody }>(
     "/api/chat/stream",
@@ -109,10 +145,21 @@ export async function buildApp({
       const disconnect = new AbortController();
       reply.raw.once("close", () => disconnect.abort());
 
-      const replies = streamReply(
+      let replies = streamReply(
         { message: message.trim(), threadId, model },
         disconnect.signal,
       );
+
+      if (usage)
+        replies = trackUsage(replies, {
+          threadId,
+          model: model ?? usage.defaultModel,
+          signal: disconnect.signal,
+          onFinish: (record) =>
+            usage.store
+              .record(record)
+              .catch((error) => request.log.error(error, "usage not saved")),
+        });
       const events = streamAsSse(
         replies,
         threadId,

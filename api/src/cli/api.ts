@@ -3,8 +3,15 @@ import { createAssistantPool } from "../agent/assistant.ts";
 import { streamReply } from "../agent/stream-reply.ts";
 import { buildApp } from "../api/app.ts";
 import { getConfig } from "../config/index.ts";
+import { defaultModelSelection } from "../infra/chat-model.ts";
+import {
+  checkDatabase,
+  closeDatabase,
+  getDatabase,
+} from "../infra/database.ts";
 import { closeVectorStore, getVectorStore } from "../infra/vector-store.ts";
 import { tools } from "../tools/index.ts";
+import { createUsageStore } from "../usage/usage-store.ts";
 import { describeFatalError } from "./fatal-error.ts";
 
 function describeTools() {
@@ -19,6 +26,7 @@ async function start(): Promise<void> {
   const { host, port, corsOrigin } = getConfig().api;
 
   await getVectorStore();
+  await checkDatabase();
   const getAssistant = createAssistantPool();
   getAssistant();
 
@@ -26,6 +34,10 @@ async function start(): Promise<void> {
     corsOrigin,
     logger: true,
     tools: describeTools(),
+    usage: {
+      store: createUsageStore(getDatabase()),
+      defaultModel: defaultModelSelection(),
+    },
     streamReply: ({ message, threadId, model }, signal) =>
       streamReply(getAssistant(model), message, threadId, signal),
   });
@@ -33,6 +45,7 @@ async function start(): Promise<void> {
   const shutdown = async () => {
     await app.close();
     await closeVectorStore();
+    await closeDatabase();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
