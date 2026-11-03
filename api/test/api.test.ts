@@ -1,0 +1,167 @@
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import { test } from "node:test";
+import type { ReplyEvent } from "../src/agent/stream-reply.ts";
+import { buildApp, type ReplyStreamer } from "../src/api/app.ts";
+import { ModelUnavailableError } from "../src/infra/chat-model.ts";
+
+const THREAD_ID = "6f1c2a3e-8b4d-4c55-9a10-2d3e4f5a6b7c";
+
+function postChat(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  body: object,
+  headers: Record<string, string> = {},
+) {
+  return app.inject({
+    method: "POST",
+    url: "/api/chat/stream",
+    payload: body,
+    headers,
+  });
+}
+
+function buildChatApp(streamReply: ReplyStreamer) {
+  return buildApp({ corsOrigin: "*", streamReply });
+}
+
+test("streams the reply as server-sent events", async () => {
+  const app = await buildChatApp(async function* (): AsyncGenerator<ReplyEvent> {
+    yield { type: "tool", id: "call-1", name: "search_profile" };
+    yield { type: "text", text: "Olá" };
+  });
+
+  const response = await postChat(app, {
+    message: "oi",
+    threadId: THREAD_ID,
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers["content-type"] as string, /text\/event-stream/);
+  assert.equal(
+    response.payload,
+    `event: start\ndata: {"threadId":"${THREAD_ID}"}\n\n` +
+      'event: tool\ndata: {"id":"call-1","name":"search_profile"}\n\n' +
+      'event: text\ndata: {"text":"Olá"}\n\n' +
+      "event: done\ndata: {}\n\n",
+  );
+});
+
+test("creates a thread id when the client sends none", async () => {
+  let receivedThreadId = "";
+  const app = await buildChatApp(async function* ({ threadId }) {
+    receivedThreadId = threadId;
+  });
+
+  const response = await postChat(app, { message: "oi" });
+
+  assert.ok(response.payload.includes(`"threadId":"${receivedThreadId}"`));
+});
+
+test("rejects invalid bodies", async () => {
+  const app = await buildChatApp(async function* () {});
+
+  for (const body of [
+    {},
+    { message: "   " },
+    { message: "oi", threadId: "not-a-uuid" },
+    { message: "x".repeat(4001) },
+    { message: "oi", model: { provider: "openai", model: "gpt" } },
+    { message: "oi", model: { provider: "ollama", model: "a b" } },
+  ])
+    assert.equal((await postChat(app, body)).statusCode, 400);
+});
+
+test("reports failures without leaking their detail", async () => {
+  const app = await buildChatApp(async function* () {
+    throw new Error("bolt://secret-host refused");
+  });
+
+  const response = await postChat(app, { message: "oi" });
+
+  assert.match(response.payload, /event: error/);
+  assert.doesNotMatch(response.payload, /secret-host/);
+});
+
+test("allows cross-origin requests", async () => {
+  const app = await buildChatApp(async function* () {});
+
+  const preflight = await app.inject({
+    method: "OPTIONS",
+    url: "/api/chat/stream",
+    headers: {
+      origin: "http://localhost:5173",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type",
+    },
+  });
+  const response = await postChat(
+    app,
+    { message: "oi" },
+    { origin: "http://localhost:5173" },
+  );
+
+  assert.equal(preflight.statusCode, 204);
+  assert.equal(preflight.headers["access-control-allow-origin"], "*");
+  assert.equal(response.headers["access-control-allow-origin"], "*");
+});
+
+test("aborts the reply when the client disconnects", async () => {
+  let resolveAborted: () => void;
+  const aborted = new Promise<void>((resolve) => (resolveAborted = resolve));
+
+  const app = await buildChatApp(async function* (_request, signal) {
+    signal.addEventListener("abort", () => resolveAborted());
+    yield { type: "text", text: "parcial" };
+    await once(signal, "abort").catch(() => {});
+  });
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+
+  const client = new AbortController();
+  const response = await fetch(`${address}/api/chat/stream`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "oi" }),
+    signal: client.signal,
+  });
+  await response.body?.getReader().read();
+  client.abort();
+
+  await aborted;
+  await app.close();
+});
+
+test("passes the selected model to the streamer", async () => {
+  let received: unknown;
+  const app = await buildChatApp(async function* ({ model }) {
+    received = model;
+  });
+  const model = { provider: "ollama", model: "qwen3:8b", think: true };
+
+  await postChat(app, { message: "oi", model });
+
+  assert.deepEqual(received, model);
+});
+
+test("surfaces model configuration errors", async () => {
+  const app = await buildChatApp(async function* () {
+    throw new ModelUnavailableError("OpenRouter não está configurado.");
+  });
+
+  const response = await postChat(app, { message: "oi" });
+
+  assert.match(response.payload, /OpenRouter não está configurado/);
+});
+
+test("lists the registered tools", async () => {
+  const tools = [{ name: "search_profile", description: "x", parameters: {} }];
+  const app = await buildApp({
+    corsOrigin: "*",
+    tools,
+    streamReply: async function* () {},
+  });
+
+  const response = await app.inject({ method: "GET", url: "/api/tools" });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { tools });
+});
