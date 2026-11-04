@@ -18,10 +18,19 @@ export interface ModelOption {
  */
 export const MODELS: ModelOption[] = [
   {
+    id: "qwen3:14b",
+    provider: "ollama",
+    label: "Qwen3 14B",
+    description: "Local on the desktop. The default.",
+    contextWindow: 16_384,
+    supportsThinking: true,
+    locked: false,
+  },
+  {
     id: "gemma4:e2b",
     provider: "ollama",
     label: "Gemma 4 E2B",
-    description: "Local on the desktop. The default.",
+    description: "Local, small and fast.",
     contextWindow: 128_000,
     locked: true,
   },
@@ -32,7 +41,7 @@ export const MODELS: ModelOption[] = [
     description: "Local and fast.",
     contextWindow: 128_000,
     supportsThinking: true,
-    locked: false,
+    locked: true,
   },
   {
     id: "qwen2.5-coder:14b",

@@ -18,7 +18,7 @@ const commaList = z
 const envSchema = z
   .object({
     LLM_PROVIDER: z.enum(["ollama", "openrouter"]).default("ollama"),
-    OLLAMA_MODEL: z.string().min(1).default("glm-4.7-flash:latest"),
+    OLLAMA_MODEL: z.string().min(1).default("qwen3:14b"),
     OLLAMA_URL: z.url().default("http://localhost:11434"),
     OLLAMA_CF_CLIENT_ID: optionalText,
     OLLAMA_CF_CLIENT_SECRET: optionalText,
