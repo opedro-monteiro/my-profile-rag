@@ -1,6 +1,7 @@
 import { Neo4jVectorStore } from "@langchain/neo4j";
 import { getConfig } from "../config/index.ts";
 import { getEmbeddings } from "./embeddings.ts";
+import { isMissingIndex } from "./is-missing-index.ts";
 
 export type StoreMode = "read" | "ingest";
 
@@ -23,7 +24,7 @@ async function connect(mode: StoreMode): Promise<Neo4jVectorStore> {
   try {
     return await Neo4jVectorStore.fromExistingIndex(embeddings, neo4j);
   } catch (error) {
-    if (error instanceof Error && error.message.includes("does not exist"))
+    if (isMissingIndex(error))
       throw new VectorIndexNotFoundError(neo4j.indexName, { cause: error });
 
     throw error;

@@ -43,6 +43,7 @@ function buildConfig(env: Env) {
       url: env.NEO4J_URI,
       username: env.NEO4J_USER,
       password: env.NEO4J_PASSWORD,
+      database: env.NEO4J_DATABASE,
       indexName: "tensors_index",
       searchType: "vector" as const,
       textNodeProperties: ["text"],

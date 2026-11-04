@@ -30,6 +30,7 @@ const envSchema = z
     NEO4J_URI: z.string().min(1),
     NEO4J_USER: z.string().min(1),
     NEO4J_PASSWORD: z.string().min(1),
+    NEO4J_DATABASE: z.string().min(1).default("neo4j"),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
     API_HOST: z.string().min(1).default("0.0.0.0"),
     API_PORT: z.coerce.number().int().min(0).max(65535).default(3333),

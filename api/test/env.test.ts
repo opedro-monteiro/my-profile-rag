@@ -69,3 +69,11 @@ test("requires both Cloudflare Access credentials together", () => {
     /OLLAMA_CF_CLIENT_SECRET/,
   );
 });
+
+test("defaults the Neo4j database name to neo4j", () => {
+  assert.equal(parseEnv(validEnv).NEO4J_DATABASE, "neo4j");
+  assert.equal(
+    parseEnv({ ...validEnv, NEO4J_DATABASE: "f8168dd6" }).NEO4J_DATABASE,
+    "f8168dd6",
+  );
+});
