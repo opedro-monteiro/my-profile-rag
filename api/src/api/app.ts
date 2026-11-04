@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyBaseLogger } from "fastify";
 import type { ReplyEvent } from "../agent/stream-reply.ts";
-import {
-  ModelUnavailableError,
-  type ModelSelection,
-} from "../infra/chat-model.ts";
+import type { ModelSelection } from "../infra/chat-model.ts";
+import { modelKey } from "../infra/model-key.ts";
 import { trackUsage } from "../usage/track-usage.ts";
 import type { UsageStore } from "../usage/usage-store.ts";
+import { describeReplyError } from "./describe-reply-error.ts";
 
-const GENERIC_ERROR_MESSAGE = "Erro ao gerar a resposta.";
 const DAY_MS = 86_400_000;
 const RANGE_DAYS = { "7d": 7, "30d": 30 } as const;
 
@@ -34,8 +33,11 @@ export interface ToolDescriptor {
 }
 
 export interface AppOptions {
-  corsOrigin: string;
+  corsOrigin: string | string[];
   streamReply: ReplyStreamer;
+  allowedModels?: string[];
+  trustProxy?: number;
+  chatRateLimit?: { max: number; timeWindow: number };
   tools?: ToolDescriptor[];
   logger?: boolean;
   usage?: {
@@ -98,11 +100,7 @@ async function* streamAsSse(
     if (signal.aborted) return;
 
     log.error(error);
-    const message =
-      error instanceof ModelUnavailableError
-        ? error.message
-        : GENERIC_ERROR_MESSAGE;
-    yield toSse("error", { message });
+    yield toSse("error", { message: describeReplyError(error) });
   }
 }
 
@@ -112,10 +110,24 @@ export async function buildApp({
   tools = [],
   logger = false,
   usage,
+  allowedModels,
+  trustProxy = 0,
+  chatRateLimit,
 }: AppOptions) {
-  const app = Fastify({ logger, forceCloseConnections: true });
+  const app = Fastify({
+    logger,
+    trustProxy: (_address, hop) => hop < trustProxy,
+    forceCloseConnections: true,
+  });
 
   await app.register(cors, { origin: corsOrigin, methods: ["GET", "POST"] });
+  await app.register(rateLimit, {
+    global: false,
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: context.statusCode,
+      message: "Muitas mensagens em pouco tempo. Aguarde um minuto.",
+    }),
+  });
 
   app.get("/health", () => ({ status: "ok" }));
 
@@ -138,9 +150,15 @@ export async function buildApp({
 
   app.post<{ Body: ChatBody }>(
     "/api/chat/stream",
-    { schema: { body: chatBodySchema } },
+    {
+      schema: { body: chatBodySchema },
+      config: chatRateLimit ? { rateLimit: chatRateLimit } : {},
+    },
     (request, reply) => {
       const { message, threadId = randomUUID(), model } = request.body;
+
+      if (model && allowedModels && !allowedModels.includes(modelKey(model)))
+        return reply.code(400).send({ message: "Modelo não disponível." });
 
       const disconnect = new AbortController();
       reply.raw.once("close", () => disconnect.abort());

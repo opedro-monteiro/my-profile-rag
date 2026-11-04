@@ -273,3 +273,85 @@ test("answers the health check", async () => {
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { status: "ok" });
 });
+
+test("tells the client when the local model is offline", async () => {
+  const app = await buildChatApp(async function* () {
+    throw new TypeError("fetch failed");
+  });
+
+  const response = await postChat(app, { message: "oi" });
+
+  assert.match(response.payload, /modelo local está offline/);
+});
+
+test("rejects a model outside the allowlist", async () => {
+  const app = await buildApp({
+    corsOrigin: "*",
+    allowedModels: ["ollama:gemma4:e2b"],
+    streamReply: async function* () {},
+  });
+
+  const blocked = await postChat(app, {
+    message: "oi",
+    model: { provider: "openrouter", model: "z-ai/glm-5.3-flash" },
+  });
+  const allowed = await postChat(app, {
+    message: "oi",
+    model: { provider: "ollama", model: "gemma4:e2b" },
+  });
+
+  assert.equal(blocked.statusCode, 400);
+  assert.deepEqual(blocked.json(), { message: "Modelo não disponível." });
+  assert.equal(allowed.statusCode, 200);
+});
+
+test("rate limits the chat per client", async () => {
+  const app = await buildApp({
+    corsOrigin: "*",
+    chatRateLimit: { max: 2, timeWindow: 60_000 },
+    streamReply: async function* () {},
+  });
+
+  await postChat(app, { message: "oi" });
+  await postChat(app, { message: "oi" });
+  const response = await postChat(app, { message: "oi" });
+
+  assert.equal(response.statusCode, 429);
+  assert.match(response.json().message, /Aguarde um minuto/);
+});
+
+test("counts each forwarded client separately behind a trusted proxy", async () => {
+  const app = await buildApp({
+    corsOrigin: "*",
+    trustProxy: 1,
+    chatRateLimit: { max: 1, timeWindow: 60_000 },
+    streamReply: async function* () {},
+  });
+
+  const first = await postChat(app, { message: "oi" }, { "x-forwarded-for": "203.0.113.1" });
+  const second = await postChat(app, { message: "oi" }, { "x-forwarded-for": "203.0.113.2" });
+
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+});
+
+test("only allows the configured origins", async () => {
+  const app = await buildApp({
+    corsOrigin: ["https://app.example.com"],
+    streamReply: async function* () {},
+  });
+
+  const listed = await app.inject({
+    method: "GET",
+    url: "/health",
+    headers: { origin: "https://app.example.com" },
+  });
+  const unlisted = await app.inject({
+    method: "GET",
+    url: "/health",
+    headers: { origin: "https://evil.example.com" },
+  });
+
+  assert.equal(listed.headers["access-control-allow-origin"], "https://app.example.com");
+  assert.equal(unlisted.headers["access-control-allow-origin"], undefined);
+});

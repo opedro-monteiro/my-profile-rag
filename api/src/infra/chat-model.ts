@@ -34,6 +34,7 @@ export function createChatModel(
   if (selection.provider === "ollama")
     return new ChatOllama({
       baseUrl: ollama.baseUrl,
+      headers: ollama.headers,
       model: selection.model,
       temperature,
       think,

@@ -10,6 +10,9 @@ function buildConfig(env: Env) {
       host: env.API_HOST,
       port: env.PORT ?? env.API_PORT,
       corsOrigin: env.CORS_ORIGIN,
+      allowedModels: env.ALLOWED_MODELS,
+      trustProxy: env.TRUST_PROXY_HOPS,
+      chatRateLimit: { max: 10, timeWindow: 60_000 },
     },
     llm: {
       provider: env.LLM_PROVIDER,
@@ -17,6 +20,13 @@ function buildConfig(env: Env) {
       ollama: {
         model: env.OLLAMA_MODEL,
         baseUrl: env.OLLAMA_URL,
+        headers:
+          env.OLLAMA_CF_CLIENT_ID && env.OLLAMA_CF_CLIENT_SECRET
+            ? {
+                "CF-Access-Client-Id": env.OLLAMA_CF_CLIENT_ID,
+                "CF-Access-Client-Secret": env.OLLAMA_CF_CLIENT_SECRET,
+              }
+            : undefined,
       },
       openRouter: {
         model: env.NLP_MODEL,
