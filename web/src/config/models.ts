@@ -50,15 +50,15 @@ export const MODELS: ModelOption[] = [
     contextWindow: 32_000,
     locked: true,
   },
-  {
-    id: "z-ai/glm-5.3-flash",
-    provider: "openrouter",
-    label: "GLM 5.3 Flash",
-    description: "Hosted on OpenRouter.",
-    contextWindow: 200_000,
-    supportsThinking: true,
-    locked: true,
-  },
+  // {
+  //   id: "z-ai/glm-5.3-flash",
+  //   provider: "openrouter",
+  //   label: "GLM 5.3 Flash",
+  //   description: "Hosted on OpenRouter.",
+  //   contextWindow: 200_000,
+  //   supportsThinking: true,
+  //   locked: true,
+  // },
 ]
 
 export const DEFAULT_MODEL = MODELS.find((model) => !model.locked) ?? MODELS[0]

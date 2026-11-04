@@ -1,4 +1,5 @@
 import type { ModelOption } from "@/config/models"
+import { readErrorMessage } from "@/lib/read-error-message"
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3333"
 
@@ -47,7 +48,7 @@ export async function postChatStream({
   })
 
   if (!response.ok || !response.body)
-    throw new Error(`Request failed with status ${response.status}`)
+    throw new Error(await readErrorMessage(response))
 
   return response.body
 }
