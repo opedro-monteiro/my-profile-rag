@@ -22,7 +22,7 @@ Guia completo para colocar o projeto no ar: a LLM roda no desktop de casa, a Clo
                                         ▼
                               ┌────────────────────┐
                               │ Desktop de casa    │  cloudflared ──▶ Ollama (localhost:11434)
-                              │ gemma4:e2b         │
+                              │ qwen3:14b          │
                               └────────────────────┘
 ```
 
@@ -31,7 +31,7 @@ Só a API conversa com o Ollama. O navegador do visitante nunca acessa o desktop
 ## Ordem de execução
 
 1. [Antes de começar](#0-antes-de-começar): pendências de código e contas
-2. [Desktop: Ollama e Gemma](#1-desktop-ollama-e-gemma)
+2. [Desktop: Ollama e Qwen3](#1-desktop-ollama-e-qwen3)
 3. [Cloudflare: domínio, tunnel e Access](#2-cloudflare-domínio-tunnel-e-access)
 4. [Testar a LLM de fora](#3-testar-a-llm-de-fora)
 5. [Backend na Railway](#4-backend-na-railway): Postgres, Neo4j, seed e API
@@ -48,7 +48,7 @@ Só a API conversa com o Ollama. O navegador do visitante nunca acessa o desktop
 | --- | --- | --- |
 | API sobe sem `.env`, lê `PORT` e roda migrations no boot | feito | |
 | Allowlist de modelos, CORS com lista, rate limit, headers do Access, mensagem de offline | feito | |
-| **Liberar o Gemma no front** (`web/src/config/models.ts`: `gemma4:e2b` com `locked: false` e como primeiro da lista) | pendente | O front envia outro modelo, e a API responde 400 "Modelo não disponível." |
+| Modelo padrão `qwen3:14b` na API e no front | feito | |
 | Conversas no Postgres com retenção de 7 dias | pendente | As conversas ficam na memória da API e somem a cada deploy ou restart |
 | Cache dos embeddings | pendente | O primeiro boot de cada deploy baixa ~90 MB da Hugging Face |
 | Build do front falhar sem `VITE_API_URL` | pendente | Se a variável faltar, o front aponta para `127.0.0.1` sem avisar |
@@ -62,7 +62,7 @@ Só a API conversa com o Ollama. O navegador do visitante nunca acessa o desktop
 
 ---
 
-## 1. Desktop: Ollama e Gemma
+## 1. Desktop: Ollama e Qwen3
 
 Os comandos abaixo são para **Windows**. Para Linux, veja o [anexo](#anexo-a-desktop-com-linux).
 
@@ -97,11 +97,11 @@ Alternativa pela interface: Iniciar → "Editar as variáveis de ambiente para s
 
 Feche o Ollama pelo ícone da bandeja e abra de novo, para ele carregar as variáveis.
 
-### 1.3 Baixar e validar o modelo
+### 1.3 Baixar e validar o modelo (`qwen3:14b`, 9,3 GB, cabe nos 12 GB da RTX 5070)
 
 ```powershell
-ollama pull gemma4:e2b
-ollama show gemma4:e2b
+ollama pull qwen3:14b
+ollama show qwen3:14b
 ```
 
 Em **Capabilities** precisa aparecer `tools`. O agente só consulta o perfil por tool calling (`search_profile`). Sem `tools`, o modelo responde sem RAG, então troque por outro modelo local que tenha essa capability.
@@ -109,8 +109,10 @@ Em **Capabilities** precisa aparecer `tools`. O agente só consulta o perfil por
 Teste rápido:
 
 ```powershell
-ollama run gemma4:e2b "Responda só: ok"
+ollama run qwen3:14b "Responda só: ok"
 ```
+
+Durante uma resposta, rode `ollama ps`. A coluna PROCESSOR precisa mostrar **100% GPU**. Se aparecer uma parte em CPU, o modelo com o contexto não coube na VRAM: reduza o `OLLAMA_CONTEXT_LENGTH` para `12288`.
 
 ### 1.4 Deixar o desktop sempre disponível
 
@@ -147,9 +149,14 @@ O quick tunnel (`*.trycloudflare.com`) não serve para produção, porque a URL 
     Isso instala o tunnel como **serviço do Windows**, que sobe com o sistema mesmo sem login.
 5. Volte ao painel e espere o status do conector ficar **Healthy**.
 
-### 2.3 Hostname público
+### 2.3 Rota pública (published application)
 
-Na aba **Public Hostname** do tunnel, clique em **Add a public hostname**:
+A Cloudflare renomeou "Public Hostname" para **Published application routes**. Depois que o conector fica Healthy, o painel volta para a visão geral. Para adicionar a rota:
+
+1. Vá em **Networking → Tunnels** (em algumas contas aparece como **Networks → Connectors → Cloudflare Tunnels**).
+2. Clique no **nome do tunnel** `ollama` e depois em **Edit** (ou **Configure**), se não abrir direto.
+3. Abra a aba **Routes** (ou **Published application routes**).
+4. Clique em **Add route → Published application** e preencha:
 
 | Campo | Valor |
 | --- | --- |
@@ -190,7 +197,7 @@ De outra máquina (o notebook, por exemplo):
 # 1. Sem credenciais: precisa ser BLOQUEADO (403, ou 302 para a tela de login)
 curl -i https://ollama.seudominio.com/api/tags
 
-# 2. Com credenciais: precisa listar os modelos, incluindo gemma4:e2b
+# 2. Com credenciais: precisa listar os modelos, incluindo qwen3:14b
 curl https://ollama.seudominio.com/api/tags \
   -H "CF-Access-Client-Id: <CLIENT_ID>" \
   -H "CF-Access-Client-Secret: <CLIENT_SECRET>"
@@ -199,7 +206,7 @@ curl https://ollama.seudominio.com/api/tags \
 curl https://ollama.seudominio.com/api/chat \
   -H "CF-Access-Client-Id: <CLIENT_ID>" \
   -H "CF-Access-Client-Secret: <CLIENT_SECRET>" \
-  -d '{"model":"gemma4:e2b","messages":[{"role":"user","content":"diga oi"}],"stream":false}'
+  -d '{"model":"qwen3:14b","messages":[{"role":"user","content":"diga oi"}],"stream":false}'
 ```
 
 ### Teste ponta a ponta antes do deploy (opcional, recomendado)
@@ -210,8 +217,8 @@ Aponte a API local do notebook para o desktop. Acrescente no `api/.env`:
 OLLAMA_URL="https://ollama.seudominio.com"
 OLLAMA_CF_CLIENT_ID="<CLIENT_ID>"
 OLLAMA_CF_CLIENT_SECRET="<CLIENT_SECRET>"
-OLLAMA_MODEL="gemma4:e2b"
-ALLOWED_MODELS="ollama:gemma4:e2b"
+OLLAMA_MODEL="qwen3:14b"
+ALLOWED_MODELS="ollama:qwen3:14b"
 ```
 
 ```bash
@@ -255,6 +262,29 @@ As tabelas são criadas pela própria API no boot (as migrations rodam sozinhas)
 4. Em **Settings → Volumes**, adicione um volume montado em `/data`. Sem ele, o índice some a cada restart.
 5. Em **Settings → Networking**, ative o **TCP Proxy** na porta `7687`. Ele só é necessário para o seed, no próximo passo. Anote o endereço, por exemplo `xxx.proxy.rlwy.net:12345`.
 
+### 4.3b Alternativa: Neo4j Aura Free
+
+Em vez do Neo4j na Railway, dá para usar uma instância grátis do Aura (<https://console.neo4j.io>). Ela pausa depois de alguns dias sem uso, e aí você precisa reativá-la no console. São dois cuidados:
+
+1. **Nome do banco.** No Aura, o banco não se chama `neo4j`: ele recebe o nome do ID da instância. Use o valor de `NEO4J_DATABASE` do arquivo de credenciais baixado:
+
+   ```env
+   NEO4J_URI=neo4j+s://<ID>.databases.neo4j.io
+   NEO4J_USER=<ID>
+   NEO4J_PASSWORD=<SENHA>
+   NEO4J_DATABASE=<ID>
+   ```
+
+2. **Versão do Cypher.** As instâncias novas usam Cypher 25 por padrão. O LangChain chama procedures que só existem no Cypher 5 (`db.index.vector.createNodeIndex`, `db.create.setVectorProperty`). Antes do seed, abra **Query** no console do Aura e rode:
+
+   ```cypher
+   ALTER DATABASE <ID> SET DEFAULT LANGUAGE CYPHER 5
+   ```
+
+   Para conferir, rode `SHOW DATABASES YIELD name, defaultLanguage`. O banco `<ID>` precisa mostrar `CYPHER 5`.
+
+Com o Aura, o TCP Proxy do passo 4.4 não é necessário: o seed roda direto contra o `NEO4J_URI`.
+
 ### 4.4 Seed: popular o Neo4j com o perfil
 
 Rode do notebook, apontando para o Neo4j da Railway. As variáveis passadas na linha de comando têm prioridade sobre o `.env`:
@@ -294,8 +324,8 @@ Depois do seed, **desative o TCP Proxy**: a API acessa o Neo4j pela rede privada
     OLLAMA_URL=https://ollama.seudominio.com
     OLLAMA_CF_CLIENT_ID=<CLIENT_ID>
     OLLAMA_CF_CLIENT_SECRET=<CLIENT_SECRET>
-    OLLAMA_MODEL=gemma4:e2b
-    ALLOWED_MODELS=ollama:gemma4:e2b
+    OLLAMA_MODEL=qwen3:14b
+    ALLOWED_MODELS=ollama:qwen3:14b
 
     # Embeddings (rodam dentro da API)
     EMBEDDING_MODEL=Xenova/all-MiniLM-L6-v2
@@ -373,12 +403,13 @@ Cada preview da Vercel tem uma URL diferente. Para testar um preview específico
 | `DATABASE_URL` | sim | `${{Postgres.DATABASE_URL}}` | Postgres de uso e conversas |
 | `NEO4J_URI` | sim | `bolt://neo4j.railway.internal:7687` | Neo4j com o índice vetorial |
 | `NEO4J_USER` / `NEO4J_PASSWORD` | sim | `neo4j` / senha forte | Credenciais do Neo4j |
+| `NEO4J_DATABASE` | no Aura | ID da instância | O padrão é `neo4j`, que serve para o Neo4j em Docker |
 | `EMBEDDING_MODEL` | sim | `Xenova/all-MiniLM-L6-v2` | Precisa ser o mesmo usado no seed |
 | `LLM_PROVIDER` | não | `ollama` | O OpenRouter está desligado por enquanto |
 | `OLLAMA_URL` | não | `https://ollama.seudominio.com` | URL do tunnel |
-| `OLLAMA_MODEL` | não | `gemma4:e2b` | Modelo padrão |
+| `OLLAMA_MODEL` | não | `qwen3:14b` | Modelo padrão |
 | `OLLAMA_CF_CLIENT_ID` / `OLLAMA_CF_CLIENT_SECRET` | em produção | Service Token | Definir os dois juntos |
-| `ALLOWED_MODELS` | recomendado | `ollama:gemma4:e2b` | Lista `provider:model`. Vazia aceita só o modelo padrão |
+| `ALLOWED_MODELS` | recomendado | `ollama:qwen3:14b` | Lista `provider:model`. Vazia aceita só o modelo padrão |
 | `CORS_ORIGIN` | recomendado | domínios do front | `*` ou lista separada por vírgula |
 | `TRUST_PROXY_HOPS` | em produção | `1` | Proxies na frente da API, usado para o rate limit por IP |
 | `PORT` | não | injetada pela Railway | Tem prioridade sobre `API_PORT` |
@@ -393,7 +424,7 @@ Cada preview da Vercel tem uma URL diferente. Para testar um preview específico
 | Chat mostra "modelo local está offline" | Desktop desligado ou suspenso, Ollama fechado ou tunnel caído | Ver o status do tunnel no painel (Healthy?) e rodar `ollama ps` no desktop |
 | Chat mostra "Erro ao gerar a resposta." e o log da API tem 403 | Service Token errado, expirado ou fora da policy | Conferir o ID e o secret na Railway e a policy da aplicação no Access |
 | 403 vindo do próprio Ollama | Faltou o **HTTP Host Header** no hostname do tunnel | Passo 2.3 |
-| "Modelo não disponível." | O front envia um modelo fora do `ALLOWED_MODELS` | Liberar o Gemma no `models.ts` (pendência do passo 0) ou ajustar a allowlist |
+| "Modelo não disponível." | O front envia um modelo fora do `ALLOWED_MODELS` | Alinhar o primeiro modelo liberado em `web/src/config/models.ts` com o `ALLOWED_MODELS` |
 | Erro de CORS no console do navegador | Domínio do front fora do `CORS_ORIGIN` | Passo 6.1 |
 | API não sobe: `Vector index "tensors_index" not found` | Seed não rodou ou o Neo4j está sem volume | Passos 4.3 (volume) e 4.4 |
 | Respostas genéricas, sem dados do perfil | Modelo sem `tools` ou contexto pequeno | Passo 1.3 (`ollama show`) e `OLLAMA_CONTEXT_LENGTH` |
@@ -415,7 +446,7 @@ sudo systemctl edit ollama
 # Environment="OLLAMA_CONTEXT_LENGTH=16384"
 sudo systemctl daemon-reload && sudo systemctl restart ollama
 
-ollama pull gemma4:e2b && ollama show gemma4:e2b
+ollama pull qwen3:14b && ollama show qwen3:14b
 
 # cloudflared (Debian/Ubuntu); o token vem do painel, passo 2.2
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb

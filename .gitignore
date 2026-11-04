@@ -1,5 +1,8 @@
 node_modules/
 .env
+.env.*
+!.env.example
+*.zip
 neo4j/
 import/
 # Logs
