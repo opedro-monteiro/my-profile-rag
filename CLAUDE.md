@@ -28,7 +28,7 @@ node --test test/env.test.ts                                  # one test file
 node --test --test-name-pattern="openrouter" test/env.test.ts # tests matching a name
 ```
 
-Setup: copy `.env.example` to `.env`. `seed` and `chat` load it with `--env-file` and fail if it is missing. `NEO4J_PASSWORD` is blank in the example and fails validation; set it to `password` to match `docker-compose.yml`. With the default provider, Ollama must be running with `OLLAMA_MODEL` pulled.
+Setup: copy `.env.example` to `.env`. `seed` and `chat` load it with `--env-file` and fail if it is missing. The example targets production on the Windows desktop (Neo4j Aura, hosted Postgres, blank secrets that fail validation until filled); for local development, use its commented "Local development" block, which matches `docker-compose.yml`. With the default provider, Ollama must be running with `OLLAMA_MODEL` pulled. `DEPLOY.md` is the production runbook.
 
 ## Architecture
 

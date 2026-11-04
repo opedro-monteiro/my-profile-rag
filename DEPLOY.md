@@ -1,81 +1,108 @@
 # Deploy em produção
 
-Guia completo para colocar o projeto no ar: a LLM roda no desktop de casa, a Cloudflare expõe essa LLM com segurança, o backend sobe na Railway e o front na Vercel.
+Guia para colocar o projeto no ar com o backend e a LLM rodando no desktop Windows de casa.
+
+| Parte | Onde roda |
+| --- | --- |
+| Front (`web/`) | Vercel |
+| Backend (`api/`) | Desktop Windows, como serviço |
+| LLM (Ollama + `qwen3:14b`) | Desktop Windows |
+| Neo4j | Neo4j Aura Free (hospedado) |
+| Postgres | Neon (hospedado) |
 
 ## Arquitetura
 
 ```text
  Visitante
-    │  HTTPS
+    │ HTTPS
     ▼
-┌──────────────┐   HTTPS (SSE)   ┌──────────────────────── Railway ───────────────────────┐
-│ Vercel       │ ──────────────▶ │ API (Fastify)  ──▶ Postgres (uso + conversas)          │
-│ web/ (Vite)  │                 │      │         ──▶ Neo4j (índice vetorial do perfil)   │
-└──────────────┘                 │      │  embeddings rodam dentro da API (transformers)  │
-                                 └──────┼─────────────────────────────────────────────────┘
-                                        │ HTTPS + headers do Cloudflare Access
-                                        ▼
-                              ┌────────────────────┐
-                              │ Cloudflare Tunnel  │  ollama.seudominio.com
-                              └─────────┬──────────┘
-                                        │ conexão de saída (nenhuma porta aberta no roteador)
-                                        ▼
-                              ┌────────────────────┐
-                              │ Desktop de casa    │  cloudflared ──▶ Ollama (localhost:11434)
-                              │ qwen3:14b          │
-                              └────────────────────┘
+┌──────────────┐  HTTPS (SSE)  ┌─────────────────────┐   tunnel    ┌──────────── Desktop Windows ────────────┐
+│ Vercel       │ ────────────▶ │ Cloudflare          │ ──────────▶ │ cloudflared                             │
+│ web/ (Vite)  │               │ api.monteirodev.com │  (conexão   │     │                                   │
+└──────────────┘               └─────────────────────┘   de saída) │     ▼                                   │
+                                                                   │ API (Node, serviço NSSM) :3333          │
+                                                                   │     │                                   │
+                                                                   │     └──▶ Ollama (qwen3:14b) :11434      │
+                                                                   └─────┼───────────────────────────────────┘
+                                                                         │ TLS
+                                                          ┌──────────────┴──────────────┐
+                                                          ▼                             ▼
+                                                    Neo4j Aura Free               Neon Postgres
+                                                    (índice vetorial)             (uso do chat)
 ```
 
-Só a API conversa com o Ollama. O navegador do visitante nunca acessa o desktop.
+- O navegador do visitante só acessa `api.monteirodev.com`. O Ollama nunca fica exposto: a API acessa ele por `localhost`.
+- O tunnel é uma conexão de saída do desktop para a Cloudflare. Nenhuma porta é aberta no roteador.
+- Se o desktop desligar, o site continua abrindo (ele está na Vercel), mas o chat e o dashboard param de responder.
 
 ## Ordem de execução
 
-1. [Antes de começar](#0-antes-de-começar): pendências de código e contas
-2. [Desktop: Ollama e Qwen3](#1-desktop-ollama-e-qwen3)
-3. [Cloudflare: domínio, tunnel e Access](#2-cloudflare-domínio-tunnel-e-access)
-4. [Testar a LLM de fora](#3-testar-a-llm-de-fora)
-5. [Backend na Railway](#4-backend-na-railway): Postgres, Neo4j, seed e API
-6. [Front na Vercel](#5-front-na-vercel)
-7. [Fechar o CORS e smoke test](#6-fechar-o-cors-e-smoke-test)
+1. [Contas e pré-requisitos](#0-contas-e-pré-requisitos)
+2. [Bancos hospedados: Neo4j Aura e Neon](#1-bancos-hospedados-neo4j-aura-e-neon)
+3. [Desktop: Ollama e Qwen3](#2-desktop-ollama-e-qwen3)
+4. [Desktop: backend](#3-desktop-backend)
+5. [Desktop: rodar em segundo plano](#4-desktop-rodar-em-segundo-plano)
+6. [Cloudflare: tunnel para o backend](#5-cloudflare-tunnel-para-o-backend)
+7. [Front na Vercel](#6-front-na-vercel)
+8. [Fechar o CORS e smoke test](#7-fechar-o-cors-e-smoke-test)
 
 ---
 
-## 0. Antes de começar
+## 0. Contas e pré-requisitos
 
-### Pendências de código
+- **GitHub**, com o repositório do projeto. A Vercel faz deploy a partir dele, e o desktop clona o código dele.
+- **Cloudflare** (grátis), com o domínio `monteirodev.com` usando o DNS da Cloudflare.
+- **Neo4j Aura** (Free): <https://console.neo4j.io>
+- **Neon** (Free): <https://neon.tech>
+- **Vercel** (Hobby, grátis): <https://vercel.com>
 
-| Item | Status | Impacto se faltar |
-| --- | --- | --- |
-| API sobe sem `.env`, lê `PORT` e roda migrations no boot | feito | |
-| Allowlist de modelos, CORS com lista, rate limit, headers do Access, mensagem de offline | feito | |
-| Modelo padrão `qwen3:14b` na API e no front | feito | |
-| Conversas no Postgres com retenção de 7 dias | pendente | As conversas ficam na memória da API e somem a cada deploy ou restart |
-| Cache dos embeddings | pendente | O primeiro boot de cada deploy baixa ~90 MB da Hugging Face |
-| Build do front falhar sem `VITE_API_URL` | pendente | Se a variável faltar, o front aponta para `127.0.0.1` sem avisar |
-
-### Contas necessárias
-
-- Cloudflare (grátis) e um domínio com o DNS gerenciado por ela
-- Railway (plano Hobby, US$ 5/mês, inclui uso)
-- Vercel (Hobby, grátis)
-- Repositório no GitHub com o projeto (Railway e Vercel fazem deploy a partir dele)
+Antes de começar, faça o push da branch com as últimas alterações (`git push`), para o desktop e a Vercel pegarem o código atualizado.
 
 ---
 
-## 1. Desktop: Ollama e Qwen3
+## 1. Bancos hospedados: Neo4j Aura e Neon
 
-Os comandos abaixo são para **Windows**. Para Linux, veja o [anexo](#anexo-a-desktop-com-linux).
+### 1.1 Neo4j Aura
 
-### 1.1 Instalar o Ollama
+1. Em <https://console.neo4j.io>, crie uma instância **AuraDB Free**.
+2. **Baixe o arquivo de credenciais** que aparece na criação. Ele traz `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` e `NEO4J_DATABASE`, e a senha não é mostrada de novo.
+3. **Mude a versão do Cypher.** As instâncias novas usam Cypher 25 por padrão, e o LangChain chama procedures que só existem no Cypher 5 (`db.index.vector.createNodeIndex`, `db.create.setVectorProperty`). Na instância, abra **Query** e rode:
+
+   ```cypher
+   ALTER DATABASE <NEO4J_DATABASE> SET DEFAULT LANGUAGE CYPHER 5
+   ```
+
+   Confira com `SHOW DATABASES YIELD name, defaultLanguage`. O banco precisa mostrar `CYPHER 5`.
+
+**Atenção ao nome do banco.** No Aura, o banco não se chama `neo4j`: ele recebe o nome do ID da instância (por exemplo `f8168dd6`). Sem o `NEO4J_DATABASE` certo, a API falha com `DatabaseNotFound`.
+
+O Aura Free pausa depois de alguns dias sem nenhuma consulta. Se isso acontecer, retome a instância no console. Com o site recebendo visitas, isso não deve acontecer.
+
+### 1.2 Neon (Postgres)
+
+1. Em <https://neon.tech>, crie um projeto. Escolha a região mais próxima do desktop (por exemplo, AWS São Paulo, se estiver disponível).
+2. Em **Connect**, copie a connection string. Ela tem o formato:
+
+   ```text
+   postgresql://<usuario>:<senha>@<host>.neon.tech/neondb?sslmode=require
+   ```
+
+3. Você não precisa criar tabelas: a API aplica as migrations sozinha a cada boot.
+
+---
+
+## 2. Desktop: Ollama e Qwen3
+
+### 2.1 Instalar o Ollama
 
 Baixe e instale em <https://ollama.com/download>.
 
-### 1.2 Variáveis de ambiente
+### 2.2 Variáveis de ambiente do Ollama
 
 No PowerShell (não precisa ser administrador):
 
 ```powershell
-[Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIV
+[Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIVE", "24h", "User")
 [Environment]::SetEnvironmentVariable("OLLAMA_CONTEXT_LENGTH", "16384", "User")
 ```
 
@@ -86,27 +113,25 @@ Para conferir:
 [Environment]::GetEnvironmentVariable("OLLAMA_CONTEXT_LENGTH", "User")
 ```
 
-Alternativa pela interface: Iniciar → "Editar as variáveis de ambiente para sua conta" → **Novo** para cada variável.
-
 | Variável | Para quê |
 | --- | --- |
 | `OLLAMA_KEEP_ALIVE=24h` | Mantém o modelo carregado na memória, para a primeira resposta não demorar |
 | `OLLAMA_CONTEXT_LENGTH=16384` | Cada pergunta envia até 10 trechos de 1000 caracteres do perfil, mais o prompt e o histórico. Com o contexto padrão, que é pequeno, o RAG é cortado |
 
-**Não** defina `OLLAMA_HOST=0.0.0.0`. O tunnel roda na mesma máquina e acessa `localhost`. Expor o Ollama na rede local não é necessário.
+**Não** defina `OLLAMA_HOST=0.0.0.0`. A API roda na mesma máquina e acessa o Ollama por `localhost`.
 
 Feche o Ollama pelo ícone da bandeja e abra de novo, para ele carregar as variáveis.
 
-### 1.3 Baixar e validar o modelo (`qwen3:14b`, 9,3 GB, cabe nos 12 GB da RTX 5070)
+### 2.3 Baixar e validar o modelo
+
+O `qwen3:14b` tem 9,3 GB e cabe nos 12 GB da RTX 5070.
 
 ```powershell
 ollama pull qwen3:14b
 ollama show qwen3:14b
 ```
 
-Em **Capabilities** precisa aparecer `tools`. O agente só consulta o perfil por tool calling (`search_profile`). Sem `tools`, o modelo responde sem RAG, então troque por outro modelo local que tenha essa capability.
-
-Teste rápido:
+Em **Capabilities** precisa aparecer `tools`. O agente só consulta o perfil por tool calling (`search_profile`).
 
 ```powershell
 ollama run qwen3:14b "Responda só: ok"
@@ -114,306 +139,292 @@ ollama run qwen3:14b "Responda só: ok"
 
 Durante uma resposta, rode `ollama ps`. A coluna PROCESSOR precisa mostrar **100% GPU**. Se aparecer uma parte em CPU, o modelo com o contexto não coube na VRAM: reduza o `OLLAMA_CONTEXT_LENGTH` para `12288`.
 
-### 1.4 Deixar o desktop sempre disponível
-
-- **Energia:** em Configurações → Sistema → Energia, ajuste "Suspender" para **Nunca**. Desative a hibernação com `powercfg /h off`, num PowerShell como administrador.
-- **O Ollama no Windows é um app de bandeja e só roda com o usuário logado.** Escolha uma opção:
-  - Login automático do Windows (`netplwiz` → desmarcar "Os usuários devem digitar um nome de usuário e uma senha"). É a opção mais simples.
-  - Uma tarefa no **Agendador de Tarefas** com o programa `ollama` e o argumento `serve`, gatilho "Ao iniciar o sistema" e a opção "Executar estando o usuário conectado ou não". Nesse caso, remova o Ollama da inicialização do usuário, para não subirem duas instâncias.
-- **Atualizações do Windows:** defina um horário ativo para evitar reinícios no meio do dia.
-
 ---
 
-## 2. Cloudflare: domínio, tunnel e Access
+## 3. Desktop: backend
 
-### 2.1 Domínio
+### 3.1 Instalar as ferramentas
 
-O domínio precisa estar com o DNS na Cloudflare.
+PowerShell **como administrador**:
 
-- Já tem domínio: em <https://dash.cloudflare.com>, clique em **Add a domain**, escolha o plano Free e troque os nameservers no registrador pelos que a Cloudflare indicar. A propagação leva de minutos a algumas horas.
-- Não tem domínio: compre no **Cloudflare Registrar** (Domain Registration → Register Domains). O DNS já fica configurado.
-
-O quick tunnel (`*.trycloudflare.com`) não serve para produção, porque a URL muda a cada reinício.
-
-### 2.2 Criar o tunnel (pelo painel)
-
-1. Acesse <https://one.dash.cloudflare.com> e vá em **Networks → Tunnels → Create a tunnel**.
-2. Escolha **Cloudflared** e use o nome `ollama`.
-3. Escolha **Windows**. O painel mostra um comando com um token.
-4. No desktop, num PowerShell **como administrador**:
-   ```powershell
-    winget install --id Cloudflare.cloudflared
-    cloudflared.exe service install <TOKEN_DO_PAINEL>
-   ```
-
-    Isso instala o tunnel como **serviço do Windows**, que sobe com o sistema mesmo sem login.
-5. Volte ao painel e espere o status do conector ficar **Healthy**.
-
-### 2.3 Rota pública (published application)
-
-A Cloudflare renomeou "Public Hostname" para **Published application routes**. Depois que o conector fica Healthy, o painel volta para a visão geral. Para adicionar a rota:
-
-1. Vá em **Networking → Tunnels** (em algumas contas aparece como **Networks → Connectors → Cloudflare Tunnels**).
-2. Clique no **nome do tunnel** `ollama` e depois em **Edit** (ou **Configure**), se não abrir direto.
-3. Abra a aba **Routes** (ou **Published application routes**).
-4. Clique em **Add route → Published application** e preencha:
-
-| Campo | Valor |
-| --- | --- |
-| Subdomain | `ollama` |
-| Domain | `seudominio.com` |
-| Service Type | `HTTP` |
-| URL | `localhost:11434` |
-| Additional application settings → HTTP Settings → **HTTP Host Header** | `localhost:11434` |
-
-Sem o **HTTP Host Header**, o Ollama pode recusar a requisição com 403.
-
-### 2.4 Proteger com Cloudflare Access (obrigatório)
-
-Sem este passo, qualquer pessoa com a URL usa a sua GPU.
-
-**Service Token** (a credencial que a API vai usar):
-
-1. Vá em **Access → Service Auth → Service Tokens → Create Service Token**.
-2. Use o nome `railway-api` e a duração **Non-expiring**, ou um prazo que você vai lembrar de renovar.
-3. Copie o **Client ID** e o **Client Secret**. O secret só aparece uma vez. Guarde num gerenciador de senhas.
-
-**Aplicação:**
-
-1. Vá em **Access → Applications → Add an application → Self-hosted**.
-2. Application domain: `ollama.seudominio.com`.
-3. Policy: nome `api-only`, Action **Service Auth**, Include → **Service Token** → `railway-api`.
-4. Salve.
-
-O Zero Trust é grátis até 50 usuários, mas pode pedir um cartão no cadastro.
-
----
-
-## 3. Testar a LLM de fora
-
-De outra máquina (o notebook, por exemplo):
-
-```bash
-# 1. Sem credenciais: precisa ser BLOQUEADO (403, ou 302 para a tela de login)
-curl -i https://ollama.seudominio.com/api/tags
-
-# 2. Com credenciais: precisa listar os modelos, incluindo qwen3:14b
-curl https://ollama.seudominio.com/api/tags \
-  -H "CF-Access-Client-Id: <CLIENT_ID>" \
-  -H "CF-Access-Client-Secret: <CLIENT_SECRET>"
-
-# 3. Geração de verdade
-curl https://ollama.seudominio.com/api/chat \
-  -H "CF-Access-Client-Id: <CLIENT_ID>" \
-  -H "CF-Access-Client-Secret: <CLIENT_SECRET>" \
-  -d '{"model":"qwen3:14b","messages":[{"role":"user","content":"diga oi"}],"stream":false}'
+```powershell
+winget install --id Git.Git
+winget install --id OpenJS.NodeJS.LTS
+winget install --id NSSM.NSSM
 ```
 
-### Teste ponta a ponta antes do deploy (opcional, recomendado)
+Feche e abra o PowerShell, e confira as versões:
 
-Aponte a API local do notebook para o desktop. Acrescente no `api/.env`:
-
-```env
-OLLAMA_URL="https://ollama.seudominio.com"
-OLLAMA_CF_CLIENT_ID="<CLIENT_ID>"
-OLLAMA_CF_CLIENT_SECRET="<CLIENT_SECRET>"
-OLLAMA_MODEL="qwen3:14b"
-ALLOWED_MODELS="ollama:qwen3:14b"
+```powershell
+git --version
+node -v      # precisa ser 22.18 ou maior
+nssm version
 ```
 
-```bash
-cd api && npm run infra:up && npm run api
-cd web && pnpm dev
-```
+O Docker não é necessário: os bancos estão hospedados.
 
-Pergunte algo sobre o perfil no chat. A resposta precisa citar trechos do PDF, e o passo `search_profile` precisa aparecer.
+### 3.2 Baixar o projeto
 
----
-
-## 4. Backend na Railway
-
-São três serviços no mesmo projeto: **Postgres**, **Neo4j** e **API**. Eles se falam pela rede privada da Railway (`*.railway.internal`).
-
-### 4.1 Criar o projeto
-
-1. Acesse <https://railway.com> e clique em **New Project → Empty Project**.
-2. Escolha a região mais próxima de você e dos visitantes.
-
-### 4.2 Postgres
-
-1. Clique em **+ Create → Database → PostgreSQL**.
-2. Pronto. A variável `DATABASE_URL` fica disponível para os outros serviços como `${{Postgres.DATABASE_URL}}`.
-
-As tabelas são criadas pela própria API no boot (as migrations rodam sozinhas).
-
-### 4.3 Neo4j
-
-1. Clique em **+ Create → Docker Image** e use `neo4j:5.14.0-community`.
-2. Renomeie o serviço para `neo4j`.
-3. Em **Variables**:
-   ```env
-    NEO4J_AUTH=neo4j/<SENHA_FORTE>
-    NEO4J_server_memory_heap_initial__size=256m
-    NEO4J_server_memory_heap_max__size=512m
-    NEO4J_server_memory_pagecache_size=256m
-   ```
-
-    O APOC não é necessário: o índice vetorial é nativo do Neo4j 5.
-4. Em **Settings → Volumes**, adicione um volume montado em `/data`. Sem ele, o índice some a cada restart.
-5. Em **Settings → Networking**, ative o **TCP Proxy** na porta `7687`. Ele só é necessário para o seed, no próximo passo. Anote o endereço, por exemplo `xxx.proxy.rlwy.net:12345`.
-
-### 4.3b Alternativa: Neo4j Aura Free
-
-Em vez do Neo4j na Railway, dá para usar uma instância grátis do Aura (<https://console.neo4j.io>). Ela pausa depois de alguns dias sem uso, e aí você precisa reativá-la no console. São dois cuidados:
-
-1. **Nome do banco.** No Aura, o banco não se chama `neo4j`: ele recebe o nome do ID da instância. Use o valor de `NEO4J_DATABASE` do arquivo de credenciais baixado:
-
-   ```env
-   NEO4J_URI=neo4j+s://<ID>.databases.neo4j.io
-   NEO4J_USER=<ID>
-   NEO4J_PASSWORD=<SENHA>
-   NEO4J_DATABASE=<ID>
-   ```
-
-2. **Versão do Cypher.** As instâncias novas usam Cypher 25 por padrão. O LangChain chama procedures que só existem no Cypher 5 (`db.index.vector.createNodeIndex`, `db.create.setVectorProperty`). Antes do seed, abra **Query** no console do Aura e rode:
-
-   ```cypher
-   ALTER DATABASE <ID> SET DEFAULT LANGUAGE CYPHER 5
-   ```
-
-   Para conferir, rode `SHOW DATABASES YIELD name, defaultLanguage`. O banco `<ID>` precisa mostrar `CYPHER 5`.
-
-Com o Aura, o TCP Proxy do passo 4.4 não é necessário: o seed roda direto contra o `NEO4J_URI`.
-
-### 4.4 Seed: popular o Neo4j com o perfil
-
-Rode do notebook, apontando para o Neo4j da Railway. As variáveis passadas na linha de comando têm prioridade sobre o `.env`:
-
-```bash
+```powershell
+cd C:\
+git clone https://github.com/opedro-monteiro/my-profile-rag.git
+cd C:\my-profile-rag
+git checkout feat/web-chat-ui
 cd api
-NEO4J_URI="bolt://xxx.proxy.rlwy.net:12345" \
-NEO4J_USER="neo4j" \
-NEO4J_PASSWORD="<SENHA_FORTE>" \
+npm ci
+```
+
+Use sempre **npm** na pasta `api/`. O `.npmrc` dela tem `legacy-peer-deps=true`, e a instalação depende disso.
+
+### 3.3 Criar o `.env`
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+O `.env.example` já traz os valores públicos. Preencha os que estão vazios:
+
+| Variável | Onde pegar |
+| --- | --- |
+| `NEO4J_URI` | arquivo de credenciais do Aura (`neo4j+s://<ID>.databases.neo4j.io`) |
+| `NEO4J_USER` | arquivo de credenciais do Aura (`NEO4J_USERNAME`) |
+| `NEO4J_PASSWORD` | arquivo de credenciais do Aura |
+| `NEO4J_DATABASE` | arquivo de credenciais do Aura (é o ID da instância) |
+| `DATABASE_URL` | connection string do Neon (passo 1.2) |
+| `CORS_ORIGIN` | por enquanto `*`. No passo 7 vira o domínio da Vercel |
+
+O `.env` está no `.gitignore` e nunca deve ir para o git.
+
+### 3.4 Popular o Neo4j (seed)
+
+```powershell
 npm run seed
 ```
 
-Depois do seed, **desative o TCP Proxy**: a API acessa o Neo4j pela rede privada. Para atualizar o perfil no futuro, troque o `api/data/Profile.pdf`, reative o proxy e rode o seed de novo.
+O seed lê `data/Profile.pdf`, gera os embeddings e grava no Aura. Na primeira vez, ele também baixa o modelo de embeddings (~90 MB), que fica em cache no disco. Se a instância do Aura já foi populada antes, pode pular este passo.
 
-### 4.5 API
+### 3.5 Testar a API
 
-1. Clique em **+ Create → GitHub Repo** e selecione o repositório.
-2. Em **Settings**:
-   | Campo | Valor |
-    |---|---|
-    | Root Directory | `api` |
-    | Start Command | `npm start` |
-    | Healthcheck Path | `/health` |
-    | Networking → **Generate Domain** | gera `https://<nome.up.railway.app>` |
-
-    O build é detectado sozinho (Node pelo `engines` do `package.json`). O `.npmrc` com `legacy-peer-deps` já está em `api/`.
-3. Em **Variables**:
-   ```env
-    # Banco e grafo (rede privada)
-    DATABASE_URL=${{Postgres.DATABASE_URL}}
-    NEO4J_URI=bolt://neo4j.railway.internal:7687
-    NEO4J_USER=neo4j
-    NEO4J_PASSWORD=<SENHA_FORTE>
-
-    # LLM no desktop
-    LLM_PROVIDER=ollama
-    OLLAMA_URL=https://ollama.seudominio.com
-    OLLAMA_CF_CLIENT_ID=<CLIENT_ID>
-    OLLAMA_CF_CLIENT_SECRET=<CLIENT_SECRET>
-    OLLAMA_MODEL=qwen3:14b
-    ALLOWED_MODELS=ollama:qwen3:14b
-
-    # Embeddings (rodam dentro da API)
-    EMBEDDING_MODEL=Xenova/all-MiniLM-L6-v2
-
-    # HTTP
-    TRUST_PROXY_HOPS=1
-    CORS_ORIGIN=*
-   ```
-
-    Não defina `PORT` nem `API_HOST`: a Railway injeta `PORT`, e o host padrão já é `0.0.0.0`.
-
-    O `CORS_ORIGIN=*` é temporário. Ele é fechado no passo 6, quando o domínio da Vercel já existir.
-4. Faça o deploy e acompanhe os logs. O esperado é:
-   - Migrations aplicadas, sem erro.
-   - `Server listening at http://0.0.0.0:<PORT>`.
-   - O primeiro boot demora um pouco a mais, porque baixa o modelo de embeddings.
-5. Teste:
-   ```bash
-    curl https://<nome.up.railway.app/health>        # {"status":"ok"}
-    curl https://<nome.up.railway.app/api/tools>     # lista search_profile e get_weather
-   ```
-
-**Conferir o `TRUST_PROXY_HOPS`:** faça uma requisição e veja, nos logs da Railway, o IP registrado na requisição. Ele precisa ser o seu IP público, não um IP interno da Railway. Se aparecer um IP interno, aumente para `2`.
-
----
-
-## 5. Front na Vercel
-
-1. Acesse <https://vercel.com>, clique em **Add New → Project** e importe o repositório.
-2. Configure:
-   | Campo | Valor |
-    |---|---|
-    | Root Directory | `web` |
-    | Framework Preset | Vite |
-    | Build Command | `pnpm build`, detectado pelo `pnpm-lock.yaml` |
-    | Output Directory | `dist` |
-3. Em **Environment Variables** (Production e Preview):
-   ```env
-    VITE_API_URL=https://<nome.up.railway.app>
-   ```
-
-    A variável é lida **no build**. Se você mudar o valor, faça um redeploy.
-4. Faça o deploy. O roteamento é por hash (`#/chat`, `#/dashboard`), então não precisa de rewrites.
-
----
-
-## 6. Fechar o CORS e smoke test
-
-### 6.1 CORS
-
-Na Railway, na API, troque o `CORS_ORIGIN` pelo domínio de produção, mais os previews se você quiser usá-los:
-
-```env
-CORS_ORIGIN=https://seu-projeto.vercel.app,https://www.seudominio.com
+```powershell
+npm start
 ```
 
-Cada preview da Vercel tem uma URL diferente. Para testar um preview específico, inclua a URL dele na lista temporariamente.
+O esperado no log é `Server listening at http://127.0.0.1:3333`. Em outro PowerShell:
 
-### 6.2 Smoke test
+```powershell
+curl.exe http://localhost:3333/health
+curl.exe http://localhost:3333/api/tools
+```
+
+O primeiro precisa retornar `{"status":"ok"}`. Pare a API com `Ctrl+C` antes do próximo passo.
+
+---
+
+## 4. Desktop: rodar em segundo plano
+
+São três processos que precisam subir sozinhos com o Windows:
+
+| Processo | Como fica em segundo plano |
+| --- | --- |
+| `cloudflared` | Serviço do Windows, instalado no passo 5 |
+| API | Serviço do Windows via **NSSM** (abaixo) |
+| Ollama | App de bandeja: só roda com o usuário logado (abaixo) |
+
+### 4.1 API como serviço (NSSM)
+
+PowerShell **como administrador**:
+
+```powershell
+mkdir C:\my-profile-rag\api\logs
+
+nssm install my-profile-rag "C:\Program Files\nodejs\node.exe" "--no-warnings --env-file-if-exists=.env src/cli/api.ts"
+nssm set my-profile-rag AppDirectory "C:\my-profile-rag\api"
+nssm set my-profile-rag DisplayName "my-profile-rag API"
+nssm set my-profile-rag Start SERVICE_DELAYED_AUTO_START
+nssm set my-profile-rag AppStdout "C:\my-profile-rag\api\logs\api.log"
+nssm set my-profile-rag AppStderr "C:\my-profile-rag\api\logs\api.log"
+nssm set my-profile-rag AppRotateFiles 1
+nssm set my-profile-rag AppRotateOnline 1
+nssm set my-profile-rag AppRotateBytes 10485760
+nssm set my-profile-rag AppRestartDelay 10000
+
+nssm start my-profile-rag
+nssm status my-profile-rag
+```
+
+- `SERVICE_DELAYED_AUTO_START` sobe a API logo depois do boot, quando a rede já está pronta.
+- Se a API não conseguir conectar no Aura ou no Neon (por exemplo, sem internet), ela encerra, e o NSSM tenta de novo a cada 10 segundos.
+- Os logs ficam em `C:\my-profile-rag\api\logs\api.log`, com rotação a cada 10 MB.
+- Se o Node não estiver em `C:\Program Files\nodejs\node.exe`, descubra o caminho com `(Get-Command node).Source`.
+
+Confira de novo: `curl.exe http://localhost:3333/health`.
+
+### 4.2 Ollama sempre no ar
+
+O Ollama no Windows é um app de bandeja e só roda com o usuário logado. Escolha uma opção:
+
+- **Login automático** (mais simples): rode `netplwiz`, desmarque "Os usuários devem digitar um nome de usuário e uma senha" e informe a senha. O Ollama já inicia com o usuário.
+- **Agendador de Tarefas** (sem login): crie uma tarefa com o programa `ollama` e o argumento `serve`, gatilho "Ao iniciar o sistema" e a opção "Executar estando o usuário conectado ou não". Nesse caso, remova o Ollama da inicialização do usuário, para não subirem duas instâncias. As variáveis do passo 2.2 são do usuário: na tarefa, use a mesma conta.
+
+### 4.3 Energia e atualizações
+
+- Em Configurações → Sistema → Energia, ajuste "Suspender" para **Nunca**.
+- Desative a hibernação: `powercfg /h off` (como administrador).
+- Em Windows Update, defina um **horário ativo** para evitar reinícios no meio do dia. Depois de um reinício, tudo sobe sozinho.
+
+---
+
+## 5. Cloudflare: tunnel para o backend
+
+### 5.1 Tunnel
+
+Se o tunnel ainda não existe:
+
+1. Acesse <https://one.dash.cloudflare.com> e vá em **Networking → Tunnels → Create a tunnel → Cloudflared**. Use o nome `desktop`.
+2. Escolha **Windows**. O painel mostra um comando com um token. No desktop, num PowerShell **como administrador**:
+
+   ```powershell
+   winget install --id Cloudflare.cloudflared
+   cloudflared.exe service install <TOKEN_DO_PAINEL>
+   ```
+
+3. Espere o status do conector ficar **Healthy**.
+
+Se você já criou um tunnel antes (por exemplo, o `ollama`), reaproveite: basta trocar as rotas no próximo passo.
+
+### 5.2 Rota pública para a API
+
+A Cloudflare chama essa tela de **Published application routes**.
+
+1. Em **Networking → Tunnels**, clique no nome do tunnel e abra a aba **Routes**.
+2. Clique em **Add route → Published application**:
+
+   | Campo | Valor |
+   | --- | --- |
+   | Subdomain | `api` |
+   | Domain | `monteirodev.com` |
+   | Path | vazio |
+   | Service Type | `HTTP` |
+   | URL | `localhost:3333` |
+
+3. Salve. A Cloudflare cria sozinha o registro DNS de `api.monteirodev.com`.
+
+**Não** crie uma aplicação do Cloudflare Access para `api.monteirodev.com`. A API precisa ser pública, porque o navegador dos visitantes chama ela direto. A proteção dela é o rate limit (10 mensagens por minuto por IP), a allowlist de modelos e o CORS.
+
+### 5.3 Remover a exposição do Ollama
+
+Se existir uma rota `ollama.monteirodev.com` de testes anteriores:
+
+1. Apague essa rota na aba **Routes** do tunnel.
+2. Em **Access → Applications**, apague a aplicação do `ollama.monteirodev.com`.
+3. Em **Access → Service Auth → Service Tokens**, revogue o token que a API usaria.
+4. Apague o registro DNS `ollama` em **DNS → Records**, caso ele não tenha sido removido junto com a rota.
+
+### 5.4 Testar de fora
+
+De outra máquina, ou do celular sem Wi-Fi:
+
+```bash
+curl https://api.monteirodev.com/health
+curl https://api.monteirodev.com/api/tools
+```
+
+O `TRUST_PROXY_HOPS=1` do `.env` faz a API usar o IP real do visitante, enviado pela Cloudflare, no rate limit. Para conferir, faça uma requisição e veja o `remoteAddress` ou `ip` no `logs\api.log`: precisa ser o seu IP público, não `127.0.0.1`.
+
+---
+
+## 6. Front na Vercel
+
+1. Em <https://vercel.com>, clique em **Add New → Project** e importe o repositório.
+2. Configure:
+
+   | Campo | Valor |
+   | --- | --- |
+   | Root Directory | `web` |
+   | Framework Preset | Vite |
+   | Build Command | `pnpm build` (detectado pelo `pnpm-lock.yaml`) |
+   | Output Directory | `dist` |
+   | Production Branch | a branch que você usa para publicar |
+
+3. Em **Environment Variables** (Production e Preview):
+
+   ```env
+   VITE_API_URL=https://api.monteirodev.com
+   ```
+
+   A variável é lida **no build**. Se mudar o valor, faça um redeploy. Se ela faltar, o front aponta para `http://127.0.0.1:3333` sem avisar.
+4. Faça o deploy. O roteamento é por hash (`#/chat`, `#/dashboard`), então não precisa de rewrites.
+5. Opcional: em **Settings → Domains**, use um domínio próprio, por exemplo `monteirodev.com` ou `chat.monteirodev.com`.
+
+---
+
+## 7. Fechar o CORS e smoke test
+
+### 7.1 CORS
+
+No desktop, edite o `C:\my-profile-rag\api\.env` e troque o `CORS_ORIGIN` pelos domínios do front, separados por vírgula:
+
+```env
+CORS_ORIGIN="https://my-profile-rag.vercel.app,https://monteirodev.com"
+```
+
+Reinicie a API:
+
+```powershell
+nssm restart my-profile-rag
+```
+
+Cada preview da Vercel tem uma URL diferente. Para testar um preview específico, inclua a URL dele temporariamente.
+
+### 7.2 Smoke test
 
 | Teste | Resultado esperado |
 | --- | --- |
 | Abrir o site e perguntar "Onde o Pedro trabalha?" | Resposta com dados do PDF, mostrando o passo `search_profile` |
 | Abrir o Dashboard | A pergunta anterior aparece nos números |
 | Enviar 11 mensagens em menos de 1 minuto | A 11ª mostra "Muitas mensagens em pouco tempo. Aguarde um minuto." |
-| Desligar o Ollama no desktop e perguntar algo | "O modelo local está offline no momento. Tente novamente mais tarde." |
-| `curl -i https://ollama.seudominio.com/api/tags`, sem headers | Bloqueado |
+| Fechar o Ollama no desktop e perguntar algo | "O modelo local está offline no momento. Tente novamente mais tarde." |
+| Reiniciar o desktop e esperar uns minutos | O chat volta a responder sem nenhuma ação manual |
+
+---
+
+## Manutenção
+
+Os comandos abaixo rodam na pasta `C:\my-profile-rag\api`.
+
+| Situação | Comando |
+| --- | --- |
+| Atualizar o código | `nssm stop my-profile-rag`, depois `git pull`, `npm ci` e `nssm start my-profile-rag` |
+| Atualizar o perfil | trocar `data/Profile.pdf`, depois `npm run seed` (não precisa parar a API) |
+| Ver os logs | `Get-Content logs\api.log -Tail 50 -Wait` |
+| Status | `nssm status my-profile-rag`, `ollama ps` e o status do tunnel no painel da Cloudflare |
+| Mudar o `.env` | editar o arquivo e rodar `nssm restart my-profile-rag` |
+
+Pare o serviço antes do `npm ci`. No Windows, os arquivos nativos em uso (como os do `onnxruntime`) ficam travados, e a instalação falha com `EPERM`.
+
+As conversas ficam na memória da API e somem quando ela reinicia. Os números do dashboard ficam no Neon e não se perdem.
 
 ---
 
 ## Referência de variáveis da API
 
-| Variável | Obrigatória | Produção | Descrição |
-| --- | --- | --- | --- |
-| `DATABASE_URL` | sim | `${{Postgres.DATABASE_URL}}` | Postgres de uso e conversas |
-| `NEO4J_URI` | sim | `bolt://neo4j.railway.internal:7687` | Neo4j com o índice vetorial |
-| `NEO4J_USER` / `NEO4J_PASSWORD` | sim | `neo4j` / senha forte | Credenciais do Neo4j |
-| `NEO4J_DATABASE` | no Aura | ID da instância | O padrão é `neo4j`, que serve para o Neo4j em Docker |
-| `EMBEDDING_MODEL` | sim | `Xenova/all-MiniLM-L6-v2` | Precisa ser o mesmo usado no seed |
-| `LLM_PROVIDER` | não | `ollama` | O OpenRouter está desligado por enquanto |
-| `OLLAMA_URL` | não | `https://ollama.seudominio.com` | URL do tunnel |
-| `OLLAMA_MODEL` | não | `qwen3:14b` | Modelo padrão |
-| `OLLAMA_CF_CLIENT_ID` / `OLLAMA_CF_CLIENT_SECRET` | em produção | Service Token | Definir os dois juntos |
-| `ALLOWED_MODELS` | recomendado | `ollama:qwen3:14b` | Lista `provider:model`. Vazia aceita só o modelo padrão |
-| `CORS_ORIGIN` | recomendado | domínios do front | `*` ou lista separada por vírgula |
-| `TRUST_PROXY_HOPS` | em produção | `1` | Proxies na frente da API, usado para o rate limit por IP |
-| `PORT` | não | injetada pela Railway | Tem prioridade sobre `API_PORT` |
-| `API_HOST` | não | não definir | O padrão é `0.0.0.0` |
+| Variável | Valor no desktop | Descrição |
+| --- | --- | --- |
+| `LLM_PROVIDER` | `ollama` | O OpenRouter está desligado por enquanto |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama na mesma máquina |
+| `OLLAMA_MODEL` | `qwen3:14b` | Modelo padrão |
+| `ALLOWED_MODELS` | `ollama:qwen3:14b` | Lista `provider:model`. Vazia aceita só o modelo padrão |
+| `EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | Precisa ser o mesmo usado no seed |
+| `NEO4J_URI` | `neo4j+s://<ID>.databases.neo4j.io` | Aura |
+| `NEO4J_USER` / `NEO4J_PASSWORD` | credenciais do Aura | |
+| `NEO4J_DATABASE` | ID da instância do Aura | O padrão `neo4j` só serve para o Neo4j em Docker |
+| `DATABASE_URL` | connection string do Neon | Precisa ter `?sslmode=require` |
+| `API_HOST` | `127.0.0.1` | Só o tunnel acessa a API |
+| `API_PORT` | `3333` | Precisa ser a mesma porta da rota do tunnel |
+| `TRUST_PROXY_HOPS` | `1` | O `cloudflared` é o único proxy na frente da API |
+| `CORS_ORIGIN` | domínios do front | `*` ou lista separada por vírgula |
+| `OLLAMA_CF_CLIENT_ID` / `OLLAMA_CF_CLIENT_SECRET` | não usar | Só para o Ollama em outra máquina, atrás de um tunnel |
 
 ---
 
@@ -421,50 +432,14 @@ Cada preview da Vercel tem uma URL diferente. Para testar um preview específico
 
 | Sintoma | Causa provável | O que fazer |
 | --- | --- | --- |
-| Chat mostra "modelo local está offline" | Desktop desligado ou suspenso, Ollama fechado ou tunnel caído | Ver o status do tunnel no painel (Healthy?) e rodar `ollama ps` no desktop |
-| Chat mostra "Erro ao gerar a resposta." e o log da API tem 403 | Service Token errado, expirado ou fora da policy | Conferir o ID e o secret na Railway e a policy da aplicação no Access |
-| 403 vindo do próprio Ollama | Faltou o **HTTP Host Header** no hostname do tunnel | Passo 2.3 |
+| Seed ou API: `DatabaseNotFound` | `NEO4J_DATABASE` vazio ou errado | Usar o ID da instância do Aura (passo 1.1) |
+| Seed: `ProcedureNotFound ... CYPHER 5` | Aura em Cypher 25 | Rodar o `ALTER DATABASE` do passo 1.1 |
+| API: `Vector index "tensors_index" not found` | Seed não rodou nessa instância | Passo 3.4 |
+| API não sobe e o log mostra `Invalid environment variables` | Variável vazia no `.env` | A mensagem diz qual. Preencher e reiniciar |
+| Chat mostra "modelo local está offline" | Ollama fechado ou usuário deslogado | Passo 4.2; conferir com `ollama ps` |
+| `https://api.monteirodev.com` retorna 502 ou 1033 | API parada ou tunnel desconectado | `nssm status my-profile-rag` e status do tunnel no painel |
+| Erro de CORS no console do navegador | Domínio do front fora do `CORS_ORIGIN` | Passo 7.1 |
 | "Modelo não disponível." | O front envia um modelo fora do `ALLOWED_MODELS` | Alinhar o primeiro modelo liberado em `web/src/config/models.ts` com o `ALLOWED_MODELS` |
-| Erro de CORS no console do navegador | Domínio do front fora do `CORS_ORIGIN` | Passo 6.1 |
-| API não sobe: `Vector index "tensors_index" not found` | Seed não rodou ou o Neo4j está sem volume | Passos 4.3 (volume) e 4.4 |
-| Respostas genéricas, sem dados do perfil | Modelo sem `tools` ou contexto pequeno | Passo 1.3 (`ollama show`) e `OLLAMA_CONTEXT_LENGTH` |
-| Rate limit atinge todo mundo ao mesmo tempo | `TRUST_PROXY_HOPS` errado: todos parecem ter o IP do proxy | Passo 4.5, conferir o `TRUST_PROXY_HOPS` |
-
----
-
-## Anexo A: desktop com Linux
-
-```bash
-# Ollama (já instala como serviço systemd)
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Variáveis do serviço
-sudo systemctl edit ollama
-# No editor, acrescente:
-# [Service]
-# Environment="OLLAMA_KEEP_ALIVE=24h"
-# Environment="OLLAMA_CONTEXT_LENGTH=16384"
-sudo systemctl daemon-reload && sudo systemctl restart ollama
-
-ollama pull qwen3:14b && ollama show qwen3:14b
-
-# cloudflared (Debian/Ubuntu); o token vem do painel, passo 2.2
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
-sudo dpkg -i cloudflared.deb
-sudo cloudflared service install <TOKEN_DO_PAINEL>
-
-# Impedir a suspensão
-sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
-```
-
-## Anexo B: backend numa VPS da Hostinger em vez da Railway
-
-A hospedagem compartilhada da Hostinger não serve: ela não roda Node de longa duração nem Neo4j. Com uma **VPS** (KVM 2 ou maior, por causa do Neo4j e dos embeddings):
-
-1. Instale Docker e Docker Compose na VPS.
-2. Suba Postgres e Neo4j com um compose parecido com `api/docker-compose.yml`, mas **sem publicar as portas** dos bancos. Use senhas fortes.
-3. Rode a API com `npm start` num container ou com `pm2`, apontando para os bancos pela rede do compose.
-4. Coloque um proxy reverso com HTTPS na frente (Caddy é o mais simples) e use `TRUST_PROXY_HOPS=1`.
-5. Para o seed, rode `npm run seed` na própria VPS.
-
-Nesse caso, segurança, backups e atualizações do sistema ficam por sua conta. Por isso a Railway é a opção recomendada.
+| Respostas genéricas, sem dados do perfil | Modelo sem `tools` ou contexto cortado | Passo 2.3 e `OLLAMA_CONTEXT_LENGTH` |
+| Rate limit atinge todo mundo ao mesmo tempo | `TRUST_PROXY_HOPS` errado: todos parecem ter o IP do tunnel | Passo 5.4 |
+| `npm ci` falha com `EPERM` | Serviço rodando com arquivos travados | `nssm stop my-profile-rag` antes |
