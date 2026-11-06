@@ -49,6 +49,8 @@ const envSchema = z
       ),
     ALLOWED_MODELS: commaList,
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+    TURNSTILE_SECRET: optionalText,
+    TURNSTILE_HOSTNAMES: commaList,
   })
   .superRefine((env, context) => {
     if (Boolean(env.OLLAMA_CF_CLIENT_ID) !== Boolean(env.OLLAMA_CF_CLIENT_SECRET))
@@ -56,6 +58,13 @@ const envSchema = z
         code: "custom",
         path: ["OLLAMA_CF_CLIENT_SECRET"],
         message: "OLLAMA_CF_CLIENT_ID and OLLAMA_CF_CLIENT_SECRET must be set together",
+      });
+
+    if (Boolean(env.TURNSTILE_SECRET) !== env.TURNSTILE_HOSTNAMES.length > 0)
+      context.addIssue({
+        code: "custom",
+        path: ["TURNSTILE_HOSTNAMES"],
+        message: "TURNSTILE_SECRET and TURNSTILE_HOSTNAMES must be set together",
       });
 
     if (env.LLM_PROVIDER !== "openrouter") return;

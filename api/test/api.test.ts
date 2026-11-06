@@ -5,7 +5,7 @@ import type { ReplyEvent } from "../src/agent/stream-reply.ts";
 import { buildApp, type ReplyStreamer } from "../src/api/app.ts";
 import { ModelUnavailableError } from "../src/infra/chat-model.ts";
 import type { ReplyUsage } from "../src/usage/track-usage.ts";
-import type { UsageStore } from "../src/usage/usage-store.ts";
+import type { UsageRecord, UsageStore } from "../src/usage/usage-store.ts";
 
 const THREAD_ID = "6f1c2a3e-8b4d-4c55-9a10-2d3e4f5a6b7c";
 
@@ -168,7 +168,7 @@ test("lists the registered tools", async () => {
   assert.deepEqual(response.json(), { tools });
 });
 
-function fakeUsageStore() {
+function fakeUsageStore(records: UsageRecord[] = []) {
   const saved: ReplyUsage[] = [];
   let since: Date | undefined;
   const store: UsageStore = {
@@ -177,7 +177,7 @@ function fakeUsageStore() {
     },
     async list(from) {
       since = from;
-      return [];
+      return records;
     },
   };
   return { store, saved, since: () => since };
@@ -263,6 +263,34 @@ test("serves the recorded usage for a range", async () => {
   assert.equal(all.statusCode, 200);
   assert.equal(usage.since(), undefined);
   assert.equal(invalid.statusCode, 400);
+});
+
+test("never exposes thread ids in the usage records", async () => {
+  const record: UsageRecord = {
+    at: 1_700_000_000_000,
+    modelId: "gemma4:e2b",
+    provider: "ollama",
+    inputTokens: 100,
+    outputTokens: 10,
+    totalTokens: 110,
+    durationMs: 1200,
+    tools: ["search_profile"],
+    status: "done",
+  };
+  const usage = fakeUsageStore([
+    { ...record, threadId: THREAD_ID } as UsageRecord,
+  ]);
+  const app = await buildApp({
+    corsOrigin: "*",
+    usage: { store: usage.store, defaultModel: DEFAULT_MODEL },
+    streamReply: async function* () {},
+  });
+
+  const response = await app.inject({ method: "GET", url: "/api/usage" });
+
+  assert.equal(response.statusCode, 200);
+  assert.ok(!response.body.includes(THREAD_ID));
+  assert.deepEqual(response.json(), { records: [record] });
 });
 
 test("answers the health check", async () => {
@@ -354,4 +382,51 @@ test("only allows the configured origins", async () => {
 
   assert.equal(listed.headers["access-control-allow-origin"], "https://app.example.com");
   assert.equal(unlisted.headers["access-control-allow-origin"], undefined);
+});
+
+test("rejects the chat when the human check fails", async () => {
+  let called = false;
+  const checked: Array<[string | undefined, string]> = [];
+  const app = await buildApp({
+    corsOrigin: "*",
+    verifyHuman: async (token, ip) => {
+      checked.push([token, ip]);
+      return token === "good-token";
+    },
+    streamReply: async function* (): AsyncGenerator<ReplyEvent> {
+      called = true;
+      yield { type: "text", text: "Olá" };
+    },
+  });
+
+  const missing = await postChat(app, { message: "oi" });
+  const invalid = await postChat(app, { message: "oi" }, { "x-turnstile-token": "bad" });
+
+  assert.equal(missing.statusCode, 403);
+  assert.equal(invalid.statusCode, 403);
+  assert.match(invalid.json().message, /humano/);
+  assert.equal(called, false);
+  assert.deepEqual(checked, [
+    [undefined, "127.0.0.1"],
+    ["bad", "127.0.0.1"],
+  ]);
+});
+
+test("streams the reply once the human check passes", async () => {
+  const app = await buildApp({
+    corsOrigin: "*",
+    verifyHuman: async (token) => token === "good-token",
+    streamReply: async function* (): AsyncGenerator<ReplyEvent> {
+      yield { type: "text", text: "Olá" };
+    },
+  });
+
+  const response = await postChat(
+    app,
+    { message: "oi" },
+    { "x-turnstile-token": "good-token" },
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.body, /event: text/);
 });

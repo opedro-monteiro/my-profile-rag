@@ -9,8 +9,10 @@ import { modelKey } from "../infra/model-key.ts";
 import { trackUsage } from "../usage/track-usage.ts";
 import type { UsageStore } from "../usage/usage-store.ts";
 import { describeReplyError } from "./describe-reply-error.ts";
+import type { HumanVerifier } from "./verify-turnstile.ts";
 
 const DAY_MS = 86_400_000;
+const TURNSTILE_HEADER = "x-turnstile-token";
 const RANGE_DAYS = { "7d": 7, "30d": 30 } as const;
 
 type UsageRange = keyof typeof RANGE_DAYS | "all";
@@ -38,6 +40,7 @@ export interface AppOptions {
   allowedModels?: string[];
   trustProxy?: number;
   chatRateLimit?: { max: number; timeWindow: number };
+  verifyHuman?: HumanVerifier;
   tools?: ToolDescriptor[];
   logger?: boolean;
   usage?: {
@@ -80,6 +83,31 @@ const usageQuerySchema = {
   },
 };
 
+const usageResponseSchema = {
+  200: {
+    type: "object",
+    properties: {
+      records: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            at: { type: "number" },
+            modelId: { type: "string" },
+            provider: { type: "string" },
+            inputTokens: { type: "integer" },
+            outputTokens: { type: "integer" },
+            totalTokens: { type: "integer" },
+            durationMs: { type: "integer" },
+            tools: { type: "array", items: { type: "string" } },
+            status: { type: "string" },
+          },
+        },
+      },
+    },
+  },
+};
+
 function toSse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
@@ -113,6 +141,7 @@ export async function buildApp({
   allowedModels,
   trustProxy = 0,
   chatRateLimit,
+  verifyHuman,
 }: AppOptions) {
   const app = Fastify({
     logger,
@@ -136,7 +165,12 @@ export async function buildApp({
   if (usage)
     app.get<{ Querystring: { range: UsageRange } }>(
       "/api/usage",
-      { schema: { querystring: usageQuerySchema } },
+      {
+        schema: {
+          querystring: usageQuerySchema,
+          response: usageResponseSchema,
+        },
+      },
       async (request) => {
         const { range } = request.query;
         const since =
@@ -154,11 +188,20 @@ export async function buildApp({
       schema: { body: chatBodySchema },
       config: chatRateLimit ? { rateLimit: chatRateLimit } : {},
     },
-    (request, reply) => {
+    async (request, reply) => {
       const { message, threadId = randomUUID(), model } = request.body;
 
       if (model && allowedModels && !allowedModels.includes(modelKey(model)))
         return reply.code(400).send({ message: "Modelo não disponível." });
+
+      const token = request.headers[TURNSTILE_HEADER];
+      if (
+        verifyHuman &&
+        !(await verifyHuman(typeof token === "string" ? token : undefined, request.ip))
+      )
+        return reply.code(403).send({
+          message: "Não foi possível confirmar que você é humano. Recarregue a página e tente de novo.",
+        });
 
       const disconnect = new AbortController();
       reply.raw.once("close", () => disconnect.abort());

@@ -377,12 +377,29 @@ nssm restart my-profile-rag
 
 Cada preview da Vercel tem uma URL diferente. Para testar um preview específico, inclua a URL dele temporariamente.
 
-### 7.2 Smoke test
+### 7.2 Turnstile (anti-bot)
+
+O chat só responde quando o navegador envia um token válido do Cloudflare Turnstile. O widget já existe, com a site key `0x4AAAAAAF1l53HTS-yZt_nU`, que fica no front em `web/src/config/turnstile.ts`.
+
+1. No painel da Cloudflare, abra **Turnstile**, clique no widget e confira se a lista **Hostnames** tem os domínios do front, por exemplo `monteirodev.com`.
+2. No mesmo widget, copie a **Secret key**. Ela não vai para o git nem para o front.
+3. No desktop, edite o `C:\my-profile-rag\api\.env`:
+
+   ```env
+   TURNSTILE_SECRET="<secret key do widget>"
+   TURNSTILE_HOSTNAMES="monteirodev.com,www.monteirodev.com"
+   ```
+
+   Use os mesmos domínios do passo 1, sem `localhost`.
+4. Rode `nssm restart my-profile-rag`. Se as duas variáveis ficarem vazias, a API sobe sem a checagem e registra o aviso `Turnstile disabled` no log.
+
+### 7.3 Smoke test
 
 | Teste | Resultado esperado |
 | --- | --- |
 | Abrir o site e perguntar "Onde o Pedro trabalha?" | Resposta com dados do PDF, mostrando o passo `search_profile` |
 | Abrir o Dashboard | A pergunta anterior aparece nos números |
+| `curl -X POST https://api.monteirodev.com/api/chat/stream -H "content-type: application/json" -d '{"message":"oi"}'` | 403 com "Não foi possível confirmar que você é humano..." |
 | Enviar 11 mensagens em menos de 1 minuto | A 11ª mostra "Muitas mensagens em pouco tempo. Aguarde um minuto." |
 | Fechar o Ollama no desktop e perguntar algo | "O modelo local está offline no momento. Tente novamente mais tarde." |
 | Reiniciar o desktop e esperar uns minutos | O chat volta a responder sem nenhuma ação manual |
@@ -424,6 +441,8 @@ As conversas ficam na memória da API e somem quando ela reinicia. Os números d
 | `API_PORT` | `3333` | Precisa ser a mesma porta da rota do tunnel |
 | `TRUST_PROXY_HOPS` | `1` | O `cloudflared` é o único proxy na frente da API |
 | `CORS_ORIGIN` | domínios do front | `*` ou lista separada por vírgula |
+| `TURNSTILE_SECRET` | secret key do widget | Vazia desliga a checagem anti-bot |
+| `TURNSTILE_HOSTNAMES` | domínios do front | Precisa vir junto com o secret, sem `localhost` |
 | `OLLAMA_CF_CLIENT_ID` / `OLLAMA_CF_CLIENT_SECRET` | não usar | Só para o Ollama em outra máquina, atrás de um tunnel |
 
 ---
@@ -438,6 +457,7 @@ As conversas ficam na memória da API e somem quando ela reinicia. Os números d
 | API não sobe e o log mostra `Invalid environment variables` | Variável vazia no `.env` | A mensagem diz qual. Preencher e reiniciar |
 | Chat mostra "modelo local está offline" | Ollama fechado ou usuário deslogado | Passo 4.2; conferir com `ollama ps` |
 | `https://api.monteirodev.com` retorna 502 ou 1033 | API parada ou tunnel desconectado | `nssm status my-profile-rag` e status do tunnel no painel |
+| Toda mensagem volta "Não foi possível confirmar que você é humano" | Secret errado ou domínio do front fora do `TURNSTILE_HOSTNAMES` | Passo 7.2 |
 | Erro de CORS no console do navegador | Domínio do front fora do `CORS_ORIGIN` | Passo 7.1 |
 | "Modelo não disponível." | O front envia um modelo fora do `ALLOWED_MODELS` | Alinhar o primeiro modelo liberado em `web/src/config/models.ts` com o `ALLOWED_MODELS` |
 | Respostas genéricas, sem dados do perfil | Modelo sem `tools` ou contexto cortado | Passo 2.3 e `OLLAMA_CONTEXT_LENGTH` |

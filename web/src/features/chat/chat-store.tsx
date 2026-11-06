@@ -1,6 +1,7 @@
 import * as React from "react"
 import { resolveModel, type ModelOption } from "@/config/models"
 import { postChatStream } from "@/lib/api"
+import { getTurnstileToken } from "@/lib/get-turnstile-token"
 import { readSse } from "@/lib/sse"
 import { readJson, writeJson } from "@/lib/storage"
 import { applyEvent, settleSteps } from "./apply-event"
@@ -141,11 +142,13 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
       let final = assistant
 
       try {
+        const turnstileToken = await getTurnstileToken().catch(() => undefined)
         const body = await postChatStream({
           message: text,
           threadId: conversation?.threadId,
           model,
           think,
+          turnstileToken,
           signal: controller.signal,
         })
 

@@ -13,6 +13,13 @@ function buildConfig(env: Env) {
       allowedModels: env.ALLOWED_MODELS,
       trustProxy: env.TRUST_PROXY_HOPS,
       chatRateLimit: { max: 10, timeWindow: 60_000 },
+      turnstile: env.TURNSTILE_SECRET
+        ? {
+            secret: env.TURNSTILE_SECRET,
+            hostnames: env.TURNSTILE_HOSTNAMES,
+            action: "chat",
+          }
+        : undefined,
     },
     llm: {
       provider: env.LLM_PROVIDER,

@@ -70,6 +70,25 @@ test("requires both Cloudflare Access credentials together", () => {
   );
 });
 
+test("requires the Turnstile secret and hostnames together", () => {
+  assert.throws(
+    () => parseEnv({ ...validEnv, TURNSTILE_SECRET: "secret" }),
+    /TURNSTILE_HOSTNAMES/,
+  );
+  assert.throws(
+    () => parseEnv({ ...validEnv, TURNSTILE_HOSTNAMES: "monteirodev.com" }),
+    /TURNSTILE_HOSTNAMES/,
+  );
+  assert.deepEqual(
+    parseEnv({
+      ...validEnv,
+      TURNSTILE_SECRET: "secret",
+      TURNSTILE_HOSTNAMES: "monteirodev.com, www.monteirodev.com",
+    }).TURNSTILE_HOSTNAMES,
+    ["monteirodev.com", "www.monteirodev.com"],
+  );
+});
+
 test("defaults the Neo4j database name to neo4j", () => {
   assert.equal(parseEnv(validEnv).NEO4J_DATABASE, "neo4j");
   assert.equal(

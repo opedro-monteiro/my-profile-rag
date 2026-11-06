@@ -26,6 +26,7 @@ export interface StreamChatInput {
   threadId?: string
   model: ModelOption
   think: boolean
+  turnstileToken?: string
   signal: AbortSignal
 }
 
@@ -34,11 +35,15 @@ export async function postChatStream({
   threadId,
   model,
   think,
+  turnstileToken,
   signal,
 }: StreamChatInput) {
   const response = await fetch(`${API_URL}/api/chat/stream`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(turnstileToken && { "x-turnstile-token": turnstileToken }),
+    },
     body: JSON.stringify({
       message,
       threadId,
