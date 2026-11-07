@@ -56,6 +56,10 @@ function buildConfig(env: Env) {
       textNodeProperties: ["text"],
       nodeLabel: "Chunk",
     },
+    github: {
+      user: env.GITHUB_USER,
+      baseUrl: "https://api.github.com",
+    },
     database: {
       url: env.DATABASE_URL,
       maxConnections: 10,

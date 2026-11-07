@@ -47,6 +47,7 @@ const envSchema = z
               .map((origin) => origin.trim())
               .filter(Boolean),
       ),
+    GITHUB_USER: z.string().min(1).default("opedro-monteiro"),
     ALLOWED_MODELS: commaList,
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
     TURNSTILE_SECRET: optionalText,
