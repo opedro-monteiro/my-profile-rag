@@ -35,7 +35,7 @@ export interface ToolDescriptor {
 }
 
 export interface AppOptions {
-  corsOrigin: string | string[];
+  corsOrigin?: string | string[];
   streamReply: ReplyStreamer;
   allowedModels?: string[];
   trustProxy?: number;
@@ -133,7 +133,7 @@ async function* streamAsSse(
 }
 
 export async function buildApp({
-  corsOrigin,
+  corsOrigin = ["https://rag.monteirodev.com"],
   streamReply,
   tools = [],
   logger = false,
@@ -149,15 +149,11 @@ export async function buildApp({
     forceCloseConnections: true,
   });
 
-  await app.register(cors, { origin: corsOrigin, methods: ["GET", "POST"] });
-  await app.register(rateLimit, {
-    global: false,
-    errorResponseBuilder: (_request, context) => ({
-      statusCode: context.statusCode,
-      message: "Muitas mensagens em pouco tempo. Aguarde um minuto.",
-    }),
+  await app.register(cors, {
+    origin: corsOrigin,
+    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "POST"],
   });
-
   app.get("/health", () => ({ status: "ok" }));
 
   app.get("/api/tools", () => ({ tools }));
