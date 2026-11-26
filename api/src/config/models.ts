@@ -54,9 +54,41 @@ export const MODEL_CATALOG: readonly CatalogEntry[] = [
     contextWindow: 32_000,
     enabled: false,
   },
+  // OpenRouter. The slugs are best guesses: one OpenRouter doesn't list
+  // shows as locked ("not_on_openrouter") in GET /api/models; fix its id.
+  {
+    provider: "openrouter",
+    id: "anthropic/claude-haiku-5.5",
+    description: "Reliable with tools and instructions.",
+  },
+  {
+    provider: "openrouter",
+    id: "deepseek/deepseek-v4.1-flash",
+    description: "Very cheap, good in Portuguese.",
+  },
   {
     provider: "openrouter",
     id: "z-ai/glm-5.3-flash",
-    description: "Hosted on OpenRouter.",
+    description: "Cheap, with thinking.",
+  },
+  {
+    provider: "openrouter",
+    id: "openai/gpt-oss-20b",
+    description: "The cheapest with tool calling.",
+  },
+  {
+    provider: "openrouter",
+    id: "qwen/qwen3.6-flash",
+    description: "Balanced price and quality.",
+  },
+  {
+    provider: "openrouter",
+    id: "openai/gpt-5.4-mini",
+    description: "Premium, about 10x the cost.",
+  },
+  {
+    provider: "openrouter",
+    id: "google/gemini-3.6-flash",
+    description: "Premium, about 10x the cost.",
   },
 ];

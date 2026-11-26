@@ -4,6 +4,8 @@ import type {
   UnavailableReason,
 } from "@/config/models"
 
+import { accessHeaders } from "@/lib/access"
+
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3333"
 
 export interface ToolDescriptor {
@@ -38,16 +40,33 @@ interface ModelDescriptor {
 export interface ModelList {
   models: ModelOption[]
   defaultId: string
+  /** "full" when the saved access token unlocked OpenRouter. */
+  access: "full" | "local"
+}
+
+/** Uses the API's own message (it is written for people) when it sends one. */
+async function requestError(response: Response) {
+  const body = (await response.json().catch(() => null)) as {
+    message?: unknown
+  } | null
+  return new Error(
+    typeof body?.message === "string"
+      ? body.message
+      : `Request failed with status ${response.status}`
+  )
 }
 
 export async function fetchModels(signal?: AbortSignal): Promise<ModelList> {
-  const response = await fetch(`${API_URL}/api/models`, { signal })
-  if (!response.ok)
-    throw new Error(`Request failed with status ${response.status}`)
+  const response = await fetch(`${API_URL}/api/models`, {
+    headers: accessHeaders(),
+    signal,
+  })
+  if (!response.ok) throw await requestError(response)
 
   const body = (await response.json()) as {
     models: ModelDescriptor[]
     default: { provider: ModelProvider; model: string }
+    access: "full" | "local"
   }
 
   return {
@@ -56,6 +75,7 @@ export async function fetchModels(signal?: AbortSignal): Promise<ModelList> {
       locked: !available,
     })),
     defaultId: body.default.model,
+    access: body.access,
   }
 }
 
@@ -76,7 +96,7 @@ export async function postChatStream({
 }: StreamChatInput) {
   const response = await fetch(`${API_URL}/api/chat/stream`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...accessHeaders() },
     body: JSON.stringify({
       message,
       threadId,
@@ -85,8 +105,8 @@ export async function postChatStream({
     signal,
   })
 
-  if (!response.ok || !response.body)
-    throw new Error(`Request failed with status ${response.status}`)
+  if (!response.ok) throw await requestError(response)
+  if (!response.body) throw new Error("The API sent an empty reply.")
 
   return response.body
 }

@@ -21,6 +21,7 @@ import { transitions } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import { useChatStore } from "./chat-store"
 import { ModelSelector } from "./model-selector"
+import { OutOfCreditsNotice } from "./out-of-credits-notice"
 
 const MAX_LENGTH = 4000
 
@@ -53,8 +54,22 @@ export function Composer({ autoFocus }: { autoFocus?: boolean }) {
     textareaRef.current?.focus()
   }
 
+  const unavailable =
+    modelsState.status === "error"
+      ? modelsState.error
+      : modelsState.status === "ready" && !model
+        ? "No model is available right now."
+        : null
+
   return (
     <form ref={formRef} onSubmit={onSubmit} className="w-full">
+      {unavailable ? (
+        <OutOfCreditsNotice
+          detail={unavailable}
+          onRetry={reloadModels}
+          className="mb-3 max-w-none"
+        />
+      ) : null}
       <InputGroup className="rounded-xl bg-card shadow-[0_1px_0_0_var(--border),0_12px_32px_-16px_color-mix(in_oklch,var(--foreground),transparent_85%)]">
         <InputGroupTextarea
           ref={textareaRef}

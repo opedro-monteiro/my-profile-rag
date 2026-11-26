@@ -5,6 +5,7 @@ import type { ReplyEvent } from "../src/agent/stream-reply.ts";
 import { buildApp, type ReplyStreamer } from "../src/api/app.ts";
 import { ModelUnavailableError } from "../src/infra/chat-model.ts";
 import { createModelCatalog } from "../src/infra/model-catalog.ts";
+import { createAccessCheck } from "../src/api/access.ts";
 
 const THREAD_ID = "6f1c2a3e-8b4d-4c55-9a10-2d3e4f5a6b7c";
 
@@ -167,18 +168,25 @@ test("lists the registered tools", async () => {
   assert.deepEqual(response.json(), { tools });
 });
 
-function buildModelsApp(streamReply: ReplyStreamer = async function* () {}) {
+function buildModelsApp(
+  streamReply: ReplyStreamer = async function* () {},
+  defaultModel: { provider: "ollama" | "openrouter"; model: string } = {
+    provider: "ollama",
+    model: "local",
+  },
+) {
   return buildApp({
     corsOrigin: "*",
     streamReply,
+    hasAccess: createAccessCheck(["good-token"]),
     models: createModelCatalog({
       entries: [
         { provider: "ollama", id: "local", contextWindow: 8000 },
         { provider: "openrouter", id: "vendor/hosted" },
       ],
-      defaultModel: { provider: "ollama", model: "local" },
-      hasOpenRouterKey: false,
-      fetchOpenRouterModels: async () => [],
+      defaultModel,
+      hasOpenRouterKey: true,
+      fetchOpenRouterModels: async () => [{ id: "vendor/hosted" }],
     }),
   });
 }
@@ -222,4 +230,62 @@ test("rejects models outside the catalog", async () => {
   assert.match(rejected.json().message, /vendor\/expensive/);
   assert.equal(accepted.statusCode, 200);
   assert.equal(called, true);
+});
+
+test("unlocks OpenRouter models for a valid access token", async () => {
+  const app = await buildModelsApp();
+
+  const list = async (authorization?: string) =>
+    (
+      await app.inject({
+        method: "GET",
+        url: "/api/models",
+        headers: authorization ? { authorization } : {},
+      })
+    ).json();
+
+  const granted = await list("Bearer good-token");
+  const denied = await list("Bearer bad-token");
+
+  assert.equal(granted.access, "full");
+  assert.equal(granted.models[1].available, true);
+  assert.equal(denied.access, "local");
+  assert.equal(denied.models[1].unavailableReason, "token_required");
+});
+
+test("requires an access token to chat with OpenRouter", async () => {
+  const app = await buildModelsApp();
+  const body = {
+    message: "oi",
+    model: { provider: "openrouter", model: "vendor/hosted" },
+  };
+
+  const denied = await postChat(app, body);
+  const wrong = await postChat(app, body, { authorization: "Bearer nope" });
+  const granted = await postChat(app, body, {
+    authorization: "Bearer good-token",
+  });
+
+  assert.equal(denied.statusCode, 403);
+  assert.equal(wrong.statusCode, 403);
+  assert.equal(granted.statusCode, 200);
+});
+
+test("requires an access token when the default model is OpenRouter", async () => {
+  const app = await buildModelsApp(async function* () {}, {
+    provider: "openrouter",
+    model: "vendor/hosted",
+  });
+
+  assert.equal((await postChat(app, { message: "oi" })).statusCode, 403);
+  assert.equal(
+    (
+      await postChat(
+        app,
+        { message: "oi" },
+        { authorization: "Bearer good-token" },
+      )
+    ).statusCode,
+    200,
+  );
 });

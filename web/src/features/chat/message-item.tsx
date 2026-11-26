@@ -1,18 +1,7 @@
 import * as React from "react"
 import { motion } from "motion/react"
-import {
-  IconAlertCircle,
-  IconCheck,
-  IconCopy,
-  IconRefresh,
-} from "@tabler/icons-react"
+import { IconCheck, IconCopy, IconRefresh } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message"
@@ -25,6 +14,7 @@ import { formatDuration, formatNumber, formatTokens } from "@/lib/format"
 import { transitions } from "@/lib/motion"
 import { AgentSteps } from "./agent-steps"
 import { useChatStore } from "./chat-store"
+import { OutOfCreditsNotice } from "./out-of-credits-notice"
 import { MarkdownContent } from "./markdown"
 import type { AssistantMessage, ChatMessage } from "./types"
 
@@ -147,22 +137,11 @@ function FailureNotice({
   onRetry: () => void
 }) {
   return (
-    <Alert variant="destructive" className="max-w-xl">
-      <IconAlertCircle />
-      <AlertTitle>The reply failed</AlertTitle>
-      <AlertDescription>{message.error}</AlertDescription>
-      <AlertAction>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onRetry}
-          disabled={!canRetry}
-        >
-          <IconRefresh data-icon="inline-start" />
-          Retry
-        </Button>
-      </AlertAction>
-    </Alert>
+    <OutOfCreditsNotice
+      detail={message.error}
+      onRetry={onRetry}
+      canRetry={canRetry}
+    />
   )
 }
 

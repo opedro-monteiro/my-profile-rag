@@ -26,8 +26,10 @@ export const PROVIDER_LABELS: Record<ModelProvider, string> = {
 
 export const UNAVAILABLE_REASONS: Record<UnavailableReason, string> = {
   disabled: "Turned off in the API's model list",
+  token_required: "Open the link Pedro sent you to use it",
   missing_api_key: "Set OPENROUTER_API_KEY in the API to use it",
-  not_on_openrouter: "OpenRouter no longer lists this model",
+  not_on_openrouter: "OpenRouter doesn't list this model id",
+  ollama_offline: "Pedro's computer is offline",
 }
 
 /** The model to use for a saved choice, falling back when it is locked or gone. */

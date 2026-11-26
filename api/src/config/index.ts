@@ -10,6 +10,7 @@ function buildConfig(env: Env) {
       host: env.API_HOST,
       port: env.API_PORT,
       corsOrigin: env.CORS_ORIGIN,
+      accessTokens: env.ACCESS_TOKENS,
     },
     llm: {
       provider: env.LLM_PROVIDER,

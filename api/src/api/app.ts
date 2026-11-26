@@ -8,8 +8,11 @@ import {
   type ModelSelection,
 } from "../infra/chat-model.ts";
 import type { ModelCatalog } from "../infra/model-catalog.ts";
+import type { AccessCheck } from "./access.ts";
 
 const GENERIC_ERROR_MESSAGE = "Erro ao gerar a resposta.";
+const ACCESS_DENIED_MESSAGE =
+  "Este link não dá acesso aos modelos do OpenRouter.";
 
 export interface ReplyRequest {
   message: string;
@@ -34,6 +37,8 @@ export interface AppOptions {
   tools?: ToolDescriptor[];
   /** Without it, `GET /api/models` is not served and any model is accepted. */
   models?: ModelCatalog;
+  /** Decides who may use OpenRouter. Without it, nobody may. */
+  hasAccess?: AccessCheck;
   logger?: boolean;
 }
 
@@ -96,6 +101,7 @@ export async function buildApp({
   streamReply,
   tools = [],
   models,
+  hasAccess = () => false,
   logger = false,
 }: AppOptions) {
   const app = Fastify({ logger, forceCloseConnections: true });
@@ -104,7 +110,10 @@ export async function buildApp({
 
   app.get("/api/tools", () => ({ tools }));
 
-  if (models) app.get("/api/models", () => models.list());
+  if (models)
+    app.get("/api/models", (request) =>
+      models.list(hasAccess(request.headers.authorization)),
+    );
 
   app.post<{ Body: ChatBody }>(
     "/api/chat/stream",
@@ -116,6 +125,10 @@ export async function buildApp({
         return reply
           .code(400)
           .send({ message: `Modelo não disponível: ${model.model}.` });
+
+      const provider = model?.provider ?? models?.defaultModel.provider;
+      if (provider === "openrouter" && !hasAccess(request.headers.authorization))
+        return reply.code(403).send({ message: ACCESS_DENIED_MESSAGE });
 
       const disconnect = new AbortController();
       reply.raw.once("close", () => disconnect.abort());

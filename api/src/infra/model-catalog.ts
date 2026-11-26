@@ -4,8 +4,10 @@ import type { LlmProvider, ModelSelection } from "./chat-model.ts";
 
 export type UnavailableReason =
   | "disabled"
+  | "token_required"
   | "missing_api_key"
-  | "not_on_openrouter";
+  | "not_on_openrouter"
+  | "ollama_offline";
 
 export interface ModelDescriptor {
   provider: LlmProvider;
@@ -22,6 +24,8 @@ export interface ModelDescriptor {
 export interface ModelList {
   models: ModelDescriptor[];
   default: { provider: LlmProvider; model: string };
+  /** "full" when the request carried a valid access token. */
+  access: "full" | "local";
 }
 
 const openRouterModelsSchema = z.object({
@@ -43,6 +47,8 @@ export type FetchOpenRouterModels = (
   signal: AbortSignal,
 ) => Promise<OpenRouterModel[]>;
 
+export type CheckOllama = (signal: AbortSignal) => Promise<boolean>;
+
 export function openRouterModelsFetcher(
   baseUrl: string,
 ): FetchOpenRouterModels {
@@ -55,21 +61,56 @@ export function openRouterModelsFetcher(
   };
 }
 
+export function ollamaChecker(baseUrl: string): CheckOllama {
+  return async (signal) => {
+    try {
+      const response = await fetch(`${baseUrl}/api/version`, { signal });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+}
+
 export interface ModelCatalogOptions {
   entries: readonly CatalogEntry[];
   defaultModel: ModelSelection;
   hasOpenRouterKey: boolean;
   fetchOpenRouterModels: FetchOpenRouterModels;
+  /** Without it, Ollama is assumed to be running. */
+  checkOllama?: CheckOllama;
   /** How long a fetched OpenRouter list is reused. */
   ttlMs?: number;
+  /** How long an Ollama check is reused. */
+  ollamaTtlMs?: number;
   timeoutMs?: number;
   onFetchError?: (error: unknown) => void;
   now?: () => number;
 }
 
 export interface ModelCatalog {
-  list(): Promise<ModelList>;
+  readonly defaultModel: ModelSelection;
+  /** `granted` is whether the request carried a valid access token. */
+  list(granted: boolean): Promise<ModelList>;
   isAllowed(selection: ModelSelection): boolean;
+}
+
+/** Caches an async lookup for `ttlMs`, sharing one call between callers. */
+function cached<T>(load: () => Promise<T>, ttlMs: number, now: () => number) {
+  let value: { at: number; result: T } | undefined;
+  let inFlight: Promise<T> | undefined;
+
+  return () => {
+    if (value && now() - value.at < ttlMs) return Promise.resolve(value.result);
+
+    inFlight ??= load()
+      .then((result) => {
+        value = { at: now(), result };
+        return result;
+      })
+      .finally(() => (inFlight = undefined));
+    return inFlight;
+  };
 }
 
 /**
@@ -82,7 +123,9 @@ export function createModelCatalog({
   defaultModel,
   hasOpenRouterKey,
   fetchOpenRouterModels,
+  checkOllama,
   ttlMs = 60 * 60 * 1000,
+  ollamaTtlMs = 15 * 1000,
   timeoutMs = 5000,
   onFetchError,
   now = Date.now,
@@ -90,48 +133,55 @@ export function createModelCatalog({
   const wantsOpenRouter = entries.some(
     (entry) => entry.provider === "openrouter",
   );
-  let cache: { at: number; models: Map<string, OpenRouterModel> } | undefined;
-  let inFlight: Promise<Map<string, OpenRouterModel> | undefined> | undefined;
+  let lastGood: Map<string, OpenRouterModel> | undefined;
 
-  async function refresh() {
-    try {
-      const models = await fetchOpenRouterModels(
-        AbortSignal.timeout(timeoutMs),
-      );
-      cache = {
-        at: now(),
-        models: new Map(models.map((model) => [model.id, model])),
-      };
-    } catch (error) {
-      onFetchError?.(error);
-    }
-    return cache?.models;
-  }
+  const openRouterModels = cached(
+    async () => {
+      try {
+        const models = await fetchOpenRouterModels(
+          AbortSignal.timeout(timeoutMs),
+        );
+        lastGood = new Map(models.map((model) => [model.id, model]));
+        return lastGood;
+      } catch (error) {
+        onFetchError?.(error);
+        throw error;
+      }
+    },
+    ttlMs,
+    now,
+  );
 
-  function openRouterModels() {
-    if (!wantsOpenRouter) return undefined;
-    if (cache && now() - cache.at < ttlMs) return cache.models;
+  const ollamaOnline = cached(
+    () =>
+      checkOllama
+        ? checkOllama(AbortSignal.timeout(Math.min(timeoutMs, 2000)))
+        : Promise.resolve(true),
+    ollamaTtlMs,
+    now,
+  );
 
-    inFlight ??= refresh().finally(() => (inFlight = undefined));
-    return inFlight;
+  function reasonFor(
+    entry: CatalogEntry,
+    granted: boolean,
+    live: Map<string, OpenRouterModel> | undefined,
+    ollamaUp: boolean,
+  ): UnavailableReason | undefined {
+    if (entry.enabled === false) return "disabled";
+    if (entry.provider === "ollama") return ollamaUp ? undefined : "ollama_offline";
+    if (!granted) return "token_required";
+    if (!hasOpenRouterKey) return "missing_api_key";
+    if (live && !live.has(entry.id)) return "not_on_openrouter";
+    return undefined;
   }
 
   function describe(
     entry: CatalogEntry,
+    reason: UnavailableReason | undefined,
     live: Map<string, OpenRouterModel> | undefined,
   ): ModelDescriptor {
     const remote =
       entry.provider === "openrouter" ? live?.get(entry.id) : undefined;
-    const reason: UnavailableReason | undefined =
-      entry.enabled === false
-        ? "disabled"
-        : entry.provider !== "openrouter"
-          ? undefined
-          : !hasOpenRouterKey
-            ? "missing_api_key"
-            : live && !remote
-              ? "not_on_openrouter"
-              : undefined;
 
     return {
       provider: entry.provider,
@@ -149,14 +199,27 @@ export function createModelCatalog({
   }
 
   return {
-    async list() {
-      const live = await openRouterModels();
+    defaultModel,
+
+    async list(granted) {
+      const [live, ollamaUp] = await Promise.all([
+        wantsOpenRouter
+          ? openRouterModels().catch(() => lastGood)
+          : Promise.resolve(undefined),
+        entries.some((entry) => entry.provider === "ollama")
+          ? ollamaOnline()
+          : Promise.resolve(true),
+      ]);
+
       return {
-        models: entries.map((entry) => describe(entry, live)),
+        models: entries.map((entry) =>
+          describe(entry, reasonFor(entry, granted, live, ollamaUp), live),
+        ),
         default: {
           provider: defaultModel.provider,
           model: defaultModel.model,
         },
+        access: granted ? "full" : "local",
       };
     },
 

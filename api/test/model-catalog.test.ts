@@ -38,7 +38,7 @@ function byId(list: Awaited<ReturnType<ReturnType<typeof catalog>["list"]>>) {
 }
 
 test("fills OpenRouter entries from its catalogue", async () => {
-  const models = byId(await catalog().list());
+  const models = byId(await catalog().list(true));
 
   assert.deepEqual(models["vendor/hosted"], {
     provider: "openrouter",
@@ -55,7 +55,7 @@ test("fills OpenRouter entries from its catalogue", async () => {
 });
 
 test("locks OpenRouter models without an API key", async () => {
-  const models = byId(await catalog({ hasOpenRouterKey: false }).list());
+  const models = byId(await catalog({ hasOpenRouterKey: false }).list(true));
 
   assert.equal(models["vendor/hosted"]?.unavailableReason, "missing_api_key");
   assert.equal(models.local?.available, true);
@@ -69,7 +69,7 @@ test("falls back to the config when OpenRouter cannot be reached", async () => {
         throw new Error("offline");
       },
       onFetchError: (error) => errors.push(error),
-    }).list(),
+    }).list(true),
   );
 
   assert.equal(errors.length, 1);
@@ -90,13 +90,13 @@ test("reuses the fetched list until it expires", async () => {
     },
   });
 
-  await Promise.all([models.list(), models.list()]);
+  await Promise.all([models.list(true), models.list(true)]);
   time = 999;
-  await models.list();
+  await models.list(true);
   assert.equal(calls, 1);
 
   time = 1000;
-  await models.list();
+  await models.list(true);
   assert.equal(calls, 2);
 });
 
@@ -123,4 +123,22 @@ test("allows only enabled catalog models and the default", () => {
     models.isAllowed({ provider: "openrouter", model: "vendor/other" }),
     false,
   );
+});
+
+test("locks OpenRouter models without a valid access token", async () => {
+  const list = await catalog().list(false);
+  const models = byId(list);
+
+  assert.equal(list.access, "local");
+  assert.equal(models["vendor/hosted"]?.unavailableReason, "token_required");
+  assert.equal(models.local?.available, true);
+});
+
+test("locks Ollama models when Ollama is not running", async () => {
+  const models = byId(
+    await catalog({ checkOllama: async () => false }).list(true),
+  );
+
+  assert.equal(models.local?.unavailableReason, "ollama_offline");
+  assert.equal(models["vendor/hosted"]?.available, true);
 });

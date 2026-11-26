@@ -14,6 +14,15 @@ const envSchema = z
     NLP_MODEL: optionalText,
     OPENROUTER_SITE_URL: optionalText,
     OPENROUTER_SITE_NAME: optionalText,
+    ACCESS_TOKENS: z
+      .string()
+      .optional()
+      .transform((value) =>
+        (value ?? "")
+          .split(",")
+          .map((token) => token.trim())
+          .filter(Boolean),
+      ),
     EMBEDDING_MODEL: z.string().min(1),
     NEO4J_URI: z.string().min(1),
     NEO4J_USER: z.string().min(1),
