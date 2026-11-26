@@ -5,6 +5,7 @@ import { readSse } from "@/lib/sse"
 import { readJson, writeJson } from "@/lib/storage"
 import { applyEvent, settleSteps } from "./apply-event"
 import type { AssistantMessage, ChatMessage, Conversation } from "./types"
+import { useModels, type ModelsState } from "./use-models"
 
 const CONVERSATIONS_KEY = "profile-rag:conversations"
 const USAGE_KEY = "profile-rag:usage"
@@ -35,7 +36,12 @@ interface ChatStore {
   active: Conversation | null
   streamingId: string | null
   usage: UsageRecord[]
-  model: ModelOption
+  /** Null until the model list loads, or when no model can be picked. */
+  model: ModelOption | null
+  models: ModelOption[]
+  modelsState: ModelsState
+  reloadModels: () => void
+  modelLabel: (id: string) => string
   think: boolean
   setModel: (id: string) => void
   setThink: (think: boolean) => void
@@ -105,8 +111,21 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
     conversationsRef.current = conversations
   }, [conversations])
 
-  const model = resolveModel(preferences.modelId)
-  const think = Boolean(preferences.think && model.supportsThinking)
+  const { state: modelsState, reload: reloadModels } = useModels()
+  const models = React.useMemo(
+    () => (modelsState.status === "ready" ? modelsState.models : []),
+    [modelsState]
+  )
+  const model = resolveModel(
+    models,
+    preferences.modelId,
+    modelsState.status === "ready" ? modelsState.defaultId : undefined
+  )
+  const think = Boolean(preferences.think && model?.supportsThinking)
+  const modelLabel = React.useCallback(
+    (id: string) => models.find((item) => item.id === id)?.label ?? id,
+    [models]
+  )
 
   React.useEffect(() => {
     const timeout = setTimeout(
@@ -149,6 +168,8 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
 
   const stream = React.useCallback(
     async (conversationId: string, text: string, history: ChatMessage[]) => {
+      if (!model) return
+
       const conversation = conversationsRef.current.find(
         (item) => item.id === conversationId
       )
@@ -234,7 +255,7 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
   const send = React.useCallback(
     (text: string) => {
       const message = text.trim()
-      if (!message || abortRef.current) return
+      if (!message || !model || abortRef.current) return
 
       const now = Date.now()
       const user: ChatMessage = {
@@ -263,12 +284,12 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
 
       void stream(conversation.id, message, [...conversation.messages, user])
     },
-    [activeId, stream]
+    [activeId, model, stream]
   )
 
   const retry = React.useCallback(
     (assistantId: string) => {
-      if (abortRef.current || !activeId) return
+      if (abortRef.current || !activeId || !model) return
 
       const conversation = conversationsRef.current.find(
         (item) => item.id === activeId
@@ -285,7 +306,7 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
         conversation.messages.slice(0, index)
       )
     },
-    [activeId, stream]
+    [activeId, model, stream]
   )
 
   const stop = React.useCallback(() => abortRef.current?.abort(), [])
@@ -324,6 +345,10 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
       streamingId,
       usage,
       model,
+      models,
+      modelsState,
+      reloadModels,
+      modelLabel,
       think,
       setModel,
       setThink,
@@ -341,6 +366,10 @@ export function ChatStoreProvider({ children }: { children: React.ReactNode }) {
       streamingId,
       usage,
       model,
+      models,
+      modelsState,
+      reloadModels,
+      modelLabel,
       think,
       setModel,
       setThink,

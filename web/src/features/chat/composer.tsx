@@ -25,14 +25,24 @@ import { ModelSelector } from "./model-selector"
 const MAX_LENGTH = 4000
 
 export function Composer({ autoFocus }: { autoFocus?: boolean }) {
-  const { send, stop, streamingId, model, setModel, think, setThink } =
-    useChatStore()
+  const {
+    send,
+    stop,
+    streamingId,
+    model,
+    models,
+    modelsState,
+    reloadModels,
+    setModel,
+    think,
+    setThink,
+  } = useChatStore()
   const [text, setText] = React.useState("")
   const formRef = React.useRef<HTMLFormElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
 
   const busy = streamingId !== null
-  const canSend = text.trim().length > 0 && !busy
+  const canSend = text.trim().length > 0 && !busy && model !== null
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -69,10 +79,13 @@ export function Composer({ autoFocus }: { autoFocus?: boolean }) {
         <InputGroupAddon align="block-end" className="gap-1">
           <ModelSelector
             model={model}
+            models={models}
+            state={modelsState}
             onModelChange={setModel}
+            onRetry={reloadModels}
             disabled={busy}
           />
-          {model.supportsThinking ? (
+          {model?.supportsThinking ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <InputGroupButton

@@ -36,7 +36,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { modelLabel } from "@/config/models"
 import { getToolMeta } from "@/config/tools"
 import { useChatStore } from "@/features/chat/chat-store"
 import { formatDuration, formatNumber, formatTokens } from "@/lib/format"
@@ -164,7 +163,7 @@ function ResetButton({ onConfirm }: { onConfirm: () => void }) {
 }
 
 export function DashboardView() {
-  const { usage, clearUsage } = useChatStore()
+  const { usage, clearUsage, modelLabel } = useChatStore()
   const [range, setRange] = React.useState<Range>("7d")
 
   const records = React.useMemo(

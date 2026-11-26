@@ -123,7 +123,12 @@ export function ChatView() {
   return (
     <div className="flex h-dvh min-h-0 flex-col">
       <PageHeader title={active?.title ?? "New chat"}>
-        {active ? <ContextMeter conversation={active} model={model} /> : null}
+        {active && model?.contextWindow ? (
+          <ContextMeter
+            conversation={active}
+            contextWindow={model.contextWindow}
+          />
+        ) : null}
       </PageHeader>
 
       {hasMessages && active ? (

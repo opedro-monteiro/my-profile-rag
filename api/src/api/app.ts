@@ -7,6 +7,7 @@ import {
   ModelUnavailableError,
   type ModelSelection,
 } from "../infra/chat-model.ts";
+import type { ModelCatalog } from "../infra/model-catalog.ts";
 
 const GENERIC_ERROR_MESSAGE = "Erro ao gerar a resposta.";
 
@@ -31,6 +32,8 @@ export interface AppOptions {
   corsOrigin: string;
   streamReply: ReplyStreamer;
   tools?: ToolDescriptor[];
+  /** Without it, `GET /api/models` is not served and any model is accepted. */
+  models?: ModelCatalog;
   logger?: boolean;
 }
 
@@ -92,6 +95,7 @@ export async function buildApp({
   corsOrigin,
   streamReply,
   tools = [],
+  models,
   logger = false,
 }: AppOptions) {
   const app = Fastify({ logger, forceCloseConnections: true });
@@ -100,11 +104,18 @@ export async function buildApp({
 
   app.get("/api/tools", () => ({ tools }));
 
+  if (models) app.get("/api/models", () => models.list());
+
   app.post<{ Body: ChatBody }>(
     "/api/chat/stream",
     { schema: { body: chatBodySchema } },
     (request, reply) => {
       const { message, threadId = randomUUID(), model } = request.body;
+
+      if (model && models && !models.isAllowed(model))
+        return reply
+          .code(400)
+          .send({ message: `Modelo não disponível: ${model.model}.` });
 
       const disconnect = new AbortController();
       reply.raw.once("close", () => disconnect.abort());

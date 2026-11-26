@@ -5,7 +5,6 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
 import { Progress } from "@/components/ui/progress"
-import type { ModelOption } from "@/config/models"
 import { formatTokens } from "@/lib/format"
 import type { Conversation } from "./types"
 
@@ -32,17 +31,17 @@ function sessionTotals(conversation: Conversation) {
 
 export function ContextMeter({
   conversation,
-  model,
+  contextWindow,
 }: {
   conversation: Conversation
-  model: ModelOption
+  contextWindow: number
 }) {
   const reply = lastReply(conversation)
   if (!reply?.usage) return null
 
   const { usage } = reply
   const used = reply.contextTokens ?? usage.inputTokens + usage.outputTokens
-  const percent = Math.min(100, Math.round((used / model.contextWindow) * 100))
+  const percent = Math.min(100, Math.round((used / contextWindow) * 100))
   const totals = sessionTotals(conversation)
   const rows = [
     { label: "Last reply in", value: usage.inputTokens },
@@ -87,7 +86,7 @@ export function ContextMeter({
         <div className="flex items-baseline justify-between gap-3 text-sm">
           <span className="font-medium">Context window</span>
           <span className="font-mono text-xs text-muted-foreground tabular-nums">
-            {formatTokens(used)} / {formatTokens(model.contextWindow)}
+            {formatTokens(used)} / {formatTokens(contextWindow)}
           </span>
         </div>
         <Progress value={percent} aria-label="Context used" />

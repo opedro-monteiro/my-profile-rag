@@ -1,15 +1,18 @@
 import * as React from "react"
 import {
+  IconAlertTriangle,
   IconBrain,
   IconChevronDown,
   IconCloud,
   IconCpu,
   IconLock,
+  IconRefresh,
 } from "@tabler/icons-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -17,33 +20,70 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { InputGroupButton } from "@/components/ui/input-group"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
-  MODELS,
   PROVIDER_LABELS,
+  UNAVAILABLE_REASONS,
   type ModelOption,
   type ModelProvider,
 } from "@/config/models"
 import { formatTokens } from "@/lib/format"
+import type { ModelsState } from "./use-models"
 
 const PROVIDERS = Object.keys(PROVIDER_LABELS) as ModelProvider[]
 
 interface ModelSelectorProps {
-  model: ModelOption
+  model: ModelOption | null
+  models: ModelOption[]
+  state: ModelsState
   onModelChange: (id: string) => void
+  onRetry: () => void
   disabled?: boolean
+}
+
+function describeModel(item: ModelOption) {
+  if (item.locked)
+    return item.unavailableReason
+      ? UNAVAILABLE_REASONS[item.unavailableReason]
+      : "Not available"
+
+  const context = item.contextWindow
+    ? `${formatTokens(item.contextWindow)} context`
+    : null
+  return [item.description, context].filter(Boolean).join(" · ")
 }
 
 export function ModelSelector({
   model,
+  models,
+  state,
   onModelChange,
+  onRetry,
   disabled,
 }: ModelSelectorProps) {
-  const ProviderIcon = model.provider === "ollama" ? IconCpu : IconCloud
+  if (state.status === "loading")
+    return (
+      <InputGroupButton size="sm" variant="ghost" disabled>
+        <Spinner data-icon="inline-start" aria-label="Loading models" />
+        Loading models
+      </InputGroupButton>
+    )
+
+  const ProviderIcon =
+    state.status === "error" || !model
+      ? IconAlertTriangle
+      : model.provider === "ollama"
+        ? IconCpu
+        : IconCloud
+  const label =
+    state.status === "error"
+      ? "Models unavailable"
+      : (model?.label ?? "No model available")
 
   return (
     <DropdownMenu>
@@ -53,10 +93,10 @@ export function ModelSelector({
             <InputGroupButton
               size="sm"
               variant="ghost"
-              aria-label={`Model: ${model.label}`}
+              aria-label={model ? `Model: ${model.label}` : label}
             >
               <ProviderIcon data-icon="inline-start" />
-              {model.label}
+              {label}
               <IconChevronDown data-icon="inline-end" />
             </InputGroupButton>
           </DropdownMenuTrigger>
@@ -64,10 +104,24 @@ export function ModelSelector({
         <TooltipContent>Choose the model</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="start" className="w-72">
-        <DropdownMenuRadioGroup value={model.id} onValueChange={onModelChange}>
+        {state.status === "error" ? (
+          <>
+            <DropdownMenuLabel className="font-normal text-muted-foreground">
+              {state.error} Start it with npm run api.
+            </DropdownMenuLabel>
+            <DropdownMenuItem onSelect={onRetry}>
+              <IconRefresh />
+              Retry loading models
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        <DropdownMenuRadioGroup
+          value={model?.id ?? ""}
+          onValueChange={onModelChange}
+        >
           {PROVIDERS.map((provider, index) => {
-            const models = MODELS.filter((item) => item.provider === provider)
-            if (models.length === 0) return null
+            const group = models.filter((item) => item.provider === provider)
+            if (group.length === 0) return null
 
             return (
               <React.Fragment key={provider}>
@@ -76,7 +130,7 @@ export function ModelSelector({
                   <DropdownMenuLabel>
                     {PROVIDER_LABELS[provider]}
                   </DropdownMenuLabel>
-                  {models.map((item) => (
+                  {group.map((item) => (
                     <DropdownMenuRadioItem
                       key={item.id}
                       value={item.id}
@@ -100,9 +154,7 @@ export function ModelSelector({
                           ) : null}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {item.locked
-                            ? "Not available yet"
-                            : `${item.description} · ${formatTokens(item.contextWindow)} context`}
+                          {describeModel(item)}
                         </span>
                       </span>
                     </DropdownMenuRadioItem>

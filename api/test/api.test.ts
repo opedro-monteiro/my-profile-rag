@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { ReplyEvent } from "../src/agent/stream-reply.ts";
 import { buildApp, type ReplyStreamer } from "../src/api/app.ts";
 import { ModelUnavailableError } from "../src/infra/chat-model.ts";
+import { createModelCatalog } from "../src/infra/model-catalog.ts";
 
 const THREAD_ID = "6f1c2a3e-8b4d-4c55-9a10-2d3e4f5a6b7c";
 
@@ -164,4 +165,61 @@ test("lists the registered tools", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { tools });
+});
+
+function buildModelsApp(streamReply: ReplyStreamer = async function* () {}) {
+  return buildApp({
+    corsOrigin: "*",
+    streamReply,
+    models: createModelCatalog({
+      entries: [
+        { provider: "ollama", id: "local", contextWindow: 8000 },
+        { provider: "openrouter", id: "vendor/hosted" },
+      ],
+      defaultModel: { provider: "ollama", model: "local" },
+      hasOpenRouterKey: false,
+      fetchOpenRouterModels: async () => [],
+    }),
+  });
+}
+
+test("lists the configured models", async () => {
+  const app = await buildModelsApp();
+
+  const response = await app.inject({ method: "GET", url: "/api/models" });
+  const body = response.json();
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(body.default, { provider: "ollama", model: "local" });
+  assert.deepEqual(
+    body.models.map((model: { id: string; available: boolean }) => [
+      model.id,
+      model.available,
+    ]),
+    [
+      ["local", true],
+      ["vendor/hosted", false],
+    ],
+  );
+});
+
+test("rejects models outside the catalog", async () => {
+  let called = false;
+  const app = await buildModelsApp(async function* () {
+    called = true;
+  });
+
+  const rejected = await postChat(app, {
+    message: "oi",
+    model: { provider: "openrouter", model: "vendor/expensive" },
+  });
+  const accepted = await postChat(app, {
+    message: "oi",
+    model: { provider: "ollama", model: "local" },
+  });
+
+  assert.equal(rejected.statusCode, 400);
+  assert.match(rejected.json().message, /vendor\/expensive/);
+  assert.equal(accepted.statusCode, 200);
+  assert.equal(called, true);
 });

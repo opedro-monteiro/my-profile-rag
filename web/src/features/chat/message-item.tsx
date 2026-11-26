@@ -21,10 +21,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { modelLabel } from "@/config/models"
 import { formatDuration, formatNumber, formatTokens } from "@/lib/format"
 import { transitions } from "@/lib/motion"
 import { AgentSteps } from "./agent-steps"
+import { useChatStore } from "./chat-store"
 import { MarkdownContent } from "./markdown"
 import type { AssistantMessage, ChatMessage } from "./types"
 
@@ -92,6 +92,7 @@ function AssistantFooter({
   onRetry: () => void
   pinned: boolean
 }) {
+  const { modelLabel } = useChatStore()
   const duration =
     message.finishedAt !== undefined
       ? formatDuration(message.finishedAt - message.startedAt)

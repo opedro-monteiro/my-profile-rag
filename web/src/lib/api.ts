@@ -1,4 +1,8 @@
-import type { ModelOption } from "@/config/models"
+import type {
+  ModelOption,
+  ModelProvider,
+  UnavailableReason,
+} from "@/config/models"
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3333"
 
@@ -18,6 +22,41 @@ export async function fetchTools(signal?: AbortSignal) {
 
   const body = (await response.json()) as { tools: ToolDescriptor[] }
   return body.tools
+}
+
+interface ModelDescriptor {
+  provider: ModelProvider
+  id: string
+  label: string
+  description: string
+  contextWindow: number | null
+  supportsThinking: boolean
+  available: boolean
+  unavailableReason?: UnavailableReason
+}
+
+export interface ModelList {
+  models: ModelOption[]
+  defaultId: string
+}
+
+export async function fetchModels(signal?: AbortSignal): Promise<ModelList> {
+  const response = await fetch(`${API_URL}/api/models`, { signal })
+  if (!response.ok)
+    throw new Error(`Request failed with status ${response.status}`)
+
+  const body = (await response.json()) as {
+    models: ModelDescriptor[]
+    default: { provider: ModelProvider; model: string }
+  }
+
+  return {
+    models: body.models.map(({ available, ...model }) => ({
+      ...model,
+      locked: !available,
+    })),
+    defaultId: body.default.model,
+  }
 }
 
 export interface StreamChatInput {
