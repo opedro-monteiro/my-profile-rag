@@ -58,6 +58,8 @@ A LangChain agent with RAG over a Neo4j vector index, a streaming Fastify API an
 
 ## Architecture
 
+Each part has its own README with its stack, flow and decisions: [**API**](api/README.md) (agent, RAG, streaming) and [**Web**](web/README.md) (chat UI).
+
 ```
 my-profile-rag/
   api/                    # agent, RAG and HTTP API (npm)
